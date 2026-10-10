@@ -1,10 +1,19 @@
+import { Platform } from "react-native";
 import { getEnhancerPreferences } from "../preferences";
+import { installShared } from "./shared-install";
+import { parseColor, textOn } from "./theme-color";
 
 const STYLE_ELEMENT_ID = "beautiful-chat-find-style";
 const BAR_ID = "beautiful-chat-find";
 const MATCHES = "beautiful-chat-find";
 const CURRENT = "beautiful-chat-find-current";
 const CHAT = '[data-testid="agent-chat-scroll"]';
+/** A split pane; it holds the tab row and every tab's panel. */
+const PANE = '[data-testid^="workspace-pane-"]';
+const COMPOSER = "[data-composer-input]";
+const TERMINAL = ".xterm";
+const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+const THEME_KEY = Symbol.for("beautiful-chat/find-theme");
 const IGNORED =
   'button, [role="button"], [aria-hidden="true"], input, textarea, svg, script, style';
 const BLOCK = "div, p, li, td, th, pre, h1, h2, h3, h4, h5, h6";
@@ -70,41 +79,72 @@ function visibleChats(root: ParentNode): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(CHAT)).filter(isVisible);
 }
 
-/**
- * The chat that owns `node`. The composer sits beside the scroll area, not
- * inside it, so the walk climbs until an ancestor holds exactly one visible
- * chat. An ancestor holding several means `node` is outside any one pane.
- */
-function chatFor(node: EventTarget | null): HTMLElement | null {
-  let element: Element | null = node instanceof Node ? node.parentElement : null;
-  if (node instanceof Element) element = node;
+// The region that belongs to `chat`: its split pane, else the widest ancestor
+// that holds no other chat and no terminal, stopping once it takes in the
+// composer, which sits beside the scroll area rather than inside it.
+function paneOf(chat: HTMLElement): Element {
+  const pane = chat.closest(PANE);
+  if (pane) return pane;
+  let region: Element = chat;
+  for (let parent = chat.parentElement; parent; parent = parent.parentElement) {
+    if (visibleChats(parent).length > 1 || parent.querySelector(TERMINAL)) break;
+    region = parent;
+    if (parent.querySelector(COMPOSER)) break;
+  }
+  return region;
+}
+
+/** The chat whose pane holds `element`; never for a terminal or a non-composer editable. */
+function chatFor(element: Element | null): HTMLElement | null {
+  if (!element?.isConnected || element.closest(TERMINAL)) return null;
+  if (element.closest(EDITABLE) && !element.closest(COMPOSER)) return null;
+  return visibleChats(document).find((chat) => paneOf(chat).contains(element)) ?? null;
+}
+
+interface FindTheme {
+  surface: string;
+  foreground: string;
+}
+
+/** Fed by every plugin surface, for a page where nothing behind the chat paints a background. */
+export function setChatFindTheme(theme: FindTheme): void {
+  (globalThis as unknown as Record<symbol, FindTheme | undefined>)[THEME_KEY] = theme;
+}
+
+function hostTheme(): FindTheme | undefined {
+  return (globalThis as unknown as Record<symbol, FindTheme | undefined>)[THEME_KEY];
+}
+
+/** The first painted background behind `element`, so the bar matches the theme. */
+function backgroundOf(element: Element | null): string | null {
   for (; element; element = element.parentElement) {
-    if (element.matches(CHAT)) return isVisible(element) ? (element as HTMLElement) : null;
-    const chats = visibleChats(element);
-    if (chats.length === 1) return chats[0] ?? null;
-    if (chats.length > 1) return null;
+    const color = getComputedStyle(element).backgroundColor;
+    const rgba = parseColor(color);
+    // A translucent tint shows the page through it, so keep climbing to an opaque one.
+    if (rgba ? rgba.a >= 0.95 : color && color !== "transparent") return color;
   }
   return null;
 }
 
-/**
- * Readable text over `background`. The chat container's own `color` is the
- * browser default, not the theme, because the host sets colour on each text
- * element instead.
- */
-function foregroundFor(background: string): string {
-  const [red = 0, green = 0, blue = 0] = (background.match(/\d+(\.\d+)?/g) ?? []).map(Number);
-  // Relative luminance weights (ITU-R BT.709).
-  return 0.2126 * red + 0.7152 * green + 0.0722 * blue > 140 ? "#1a1a1a" : "#f2f2f2";
+// Colours for the bar. The container's own `color` is the browser default, not
+// the theme, because the host sets colour on each text element instead; the
+// text is picked against the background, and the host theme fills in.
+function colorsFor(chat: Element): { background: string; color: string } {
+  const theme = hostTheme();
+  const painted = backgroundOf(chat);
+  if (painted) {
+    return { background: painted, color: textOn(painted) ?? theme?.foreground ?? "CanvasText" };
+  }
+  if (theme) return { background: theme.surface, color: theme.foreground };
+  return { background: "Canvas", color: "CanvasText" };
 }
 
-/** The first painted background behind `element`, so the bar matches the theme. */
-function backgroundOf(element: Element | null): string {
-  for (; element; element = element.parentElement) {
-    const color = getComputedStyle(element).backgroundColor;
-    if (color && color !== "transparent" && !/rgba\(.*,\s*0\)$/.test(color)) return color;
-  }
-  return "Canvas";
+function isMac(): boolean {
+  const platform = (navigator as Navigator & { platform?: string }).platform ?? "";
+  return (
+    /Macintosh|Mac OS|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    /Mac|iPhone|iPad|iPod/i.test(platform)
+  );
 }
 
 /**
@@ -154,23 +194,19 @@ function findMatches(chat: HTMLElement, query: string): Range[] {
   return ranges;
 }
 
-/**
- * Paseo's own chat find addresses rows by the host's message id, and a row
- * this plugin draws carries a plugin id instead, so the host can never reveal
- * a match inside one. This find bar searches what is rendered, whoever drew
- * it. The host list is windowed: history the chat has not loaded is not in
- * the page and is not searched.
- *
- * Ctrl/Cmd+F is taken only while the plugin replaces prompts or replies, and
- * only when the focused or last-clicked element belongs to one chat, or only one
- * chat is on screen; otherwise the key reaches the host untouched. A no-op off web and where the CSS Highlight API is missing.
- */
+// Paseo's own find addresses rows by host message id, and a plugin-drawn row
+// carries a plugin id, so the host cannot reveal a match inside one. This bar
+// searches what is rendered; history the windowed list has not loaded is not.
 export function installChatFind(): () => void {
-  if (typeof document === "undefined" || typeof CSS === "undefined" || !("highlights" in CSS)) {
-    return () => {};
-  }
-  if (document.getElementById(STYLE_ELEMENT_ID)) return () => {};
+  if (Platform.OS !== "web" || typeof document === "undefined") return () => {};
+  if (typeof CSS === "undefined" || !("highlights" in CSS)) return () => {};
+  return installShared("chat-find", installFindBar);
+}
 
+// The key is taken only while the plugin draws prompts or replies, and only when
+// focus, or the last click, sits in a chat's own pane; anywhere else it reaches
+// the host untouched. Command+F on macOS, Control+F elsewhere, like the host.
+function installFindBar(): () => void {
   const style = document.createElement("style");
   style.id = STYLE_ELEMENT_ID;
   style.textContent = FIND_RULES;
@@ -180,6 +216,7 @@ export function installChatFind(): () => void {
   let ranges: Range[] = [];
   let current = -1;
   let lastTarget: EventTarget | null = null;
+  const mac = isMac();
 
   const bar = document.createElement("div");
   bar.id = BAR_ID;
@@ -212,14 +249,25 @@ export function installChatFind(): () => void {
   );
   document.body.appendChild(bar);
 
+  // A pane resize moves the bar's anchor, and a tab switch hides the chat
+  // (it stays connected), which reads as a resize to zero.
+  const resizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => place());
+
+  /** False, after closing the bar, once the chat is gone or hidden by a tab switch. */
+  function present(): boolean {
+    if (chat?.isConnected && isVisible(chat)) return true;
+    close();
+    return false;
+  }
+
   function place() {
-    if (!chat) return;
+    if (!chat || !present()) return;
     const rect = chat.getBoundingClientRect();
     bar.style.top = `${Math.max(rect.top + 8, 8)}px`;
     bar.style.right = `${Math.max(window.innerWidth - rect.right + 16, 8)}px`;
-    const background = backgroundOf(chat);
+    const { background, color } = colorsFor(chat);
     bar.style.background = background;
-    bar.style.color = foregroundFor(background);
+    bar.style.color = color;
   }
 
   function show() {
@@ -234,7 +282,7 @@ export function installChatFind(): () => void {
   }
 
   function search() {
-    if (!chat?.isConnected) return close();
+    if (!chat || !present()) return;
     ranges = findMatches(chat, input.value);
     // Start from the first match at or below the top of what is on screen.
     const top = chat.getBoundingClientRect().top;
@@ -244,7 +292,7 @@ export function installChatFind(): () => void {
   }
 
   function step(direction: 1 | -1) {
-    if (!chat?.isConnected) return close();
+    if (!chat || !present()) return;
     // Rows mount, unmount and stream while the bar is open, so re-read the page
     // and continue from the same occurrence when it is still there.
     const previous = ranges[current];
@@ -270,8 +318,17 @@ export function installChatFind(): () => void {
     chat = null;
     ranges = [];
     current = -1;
+    resizes?.disconnect();
     CSS.highlights.delete(MATCHES);
     CSS.highlights.delete(CURRENT);
+  }
+
+  /** The focused element, or the last thing clicked when focus is on the page itself. */
+  function origin(): Element | null {
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== document.documentElement) return active;
+    if (lastTarget instanceof Element) return lastTarget;
+    return lastTarget instanceof Node ? lastTarget.parentElement : null;
   }
 
   const onPointerDown = (event: PointerEvent) => {
@@ -279,23 +336,22 @@ export function installChatFind(): () => void {
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key.toLowerCase() !== "f" || !(event.ctrlKey || event.metaKey)) return;
-    if (event.altKey || event.shiftKey) return;
-    // With both message replacements off, Paseo draws every prompt and reply and its own
-    // find, which also searches unloaded history, reaches them.
+    if (event.defaultPrevented || event.isComposing) return;
+    if (event.key.toLowerCase() !== "f" || event.altKey || event.shiftKey) return;
+    if (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey) return;
+    // A second press from the bar hands over to the host's find, which also
+    // searches history the chat has not loaded.
+    if (bar.contains(document.activeElement)) return close();
     const { assistantMarkdown, enhancedUserBubble } = getEnhancerPreferences();
     if (!assistantMarkdown && !enhancedUserBubble) return;
-    const onScreen = visibleChats(document);
-    const target = bar.contains(document.activeElement)
-      ? chat
-      : (chatFor(document.activeElement) ??
-        chatFor(lastTarget) ??
-        (onScreen.length === 1 ? (onScreen[0] ?? null) : null));
+    const target = chatFor(origin());
     if (!target) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     chat = target;
     bar.hidden = false;
+    resizes?.disconnect();
+    resizes?.observe(target);
     place();
     input.focus();
     input.select();
@@ -310,10 +366,12 @@ export function installChatFind(): () => void {
     event.stopPropagation();
   };
 
+  const onResize = () => place();
+
   // Window capture runs before the host's document-level Ctrl+F handler.
   window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("pointerdown", onPointerDown, true);
-  window.addEventListener("resize", place);
+  window.addEventListener("resize", onResize);
   input.addEventListener("keydown", onInputKeyDown);
   input.addEventListener("input", search);
 
@@ -321,7 +379,7 @@ export function installChatFind(): () => void {
     close();
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
-    window.removeEventListener("resize", place);
+    window.removeEventListener("resize", onResize);
     bar.remove();
     style.remove();
   };

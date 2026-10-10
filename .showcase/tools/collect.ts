@@ -1,7 +1,7 @@
 import { DEVICON_URIS } from "../../client/components/devicon-data";
 import { LOBE_MARKS } from "../../client/components/lobe-marks";
 import { LOCAL_MARKS } from "../../client/components/provider-logo";
-import { BRAND_PATHS } from "../../client/components/glyph";
+import { BRAND_PATHS } from "./brand-paths";
 import { GENERIC_FILE_PATH, FOLDER_PATH } from "../../client/components/file-type-logo";
 
 const marks: Array<{ id: string; svg: string; mono: boolean }> = [];

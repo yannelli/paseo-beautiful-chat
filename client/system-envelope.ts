@@ -31,14 +31,16 @@ export interface SystemEnvelope {
   failed: boolean;
 }
 
-const TAG_KINDS: Record<string, SystemEnvelopeKind> = {
-  "system-notice": "notice",
-  "system-reminder": "reminder",
-  irc: "message",
-  "system-interrupt": "reminder",
-  "paseo-system": "notice",
-  "agent-response": "message",
-};
+// A Map, not an object literal: a reply opening with `<constructor>` must not
+// find a kind on the object prototype.
+const TAG_KINDS = new Map<string, SystemEnvelopeKind>([
+  ["system-notice", "notice"],
+  ["system-reminder", "reminder"],
+  ["irc", "message"],
+  ["system-interrupt", "reminder"],
+  ["paseo-system", "notice"],
+  ["agent-response", "message"],
+]);
 
 const TASK_RESULT = /<task-result\b([^>]*)>([\s\S]*?)<\/task-result>/i;
 const META = /<meta\b([^>]*)\/?>/i;
@@ -136,7 +138,7 @@ export function parseSystemEnvelope(text: string): SystemEnvelope | null {
   const open = trimmed.match(/^<([\w-]+)(?:\s[^>]*)?>/);
   const tag = open?.[1]?.toLowerCase();
   if (!tag) return null;
-  const kind = TAG_KINDS[tag];
+  const kind = TAG_KINDS.get(tag);
   if (!kind) return null;
 
   const close = `</${tag}>`;

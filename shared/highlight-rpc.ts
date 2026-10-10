@@ -48,3 +48,15 @@ export const highlightRpc = defineRpc({
 
 export type HighlightToken = z.infer<typeof highlightToken>;
 export type HighlightLine = z.infer<typeof highlightLine>;
+
+/** Hints that ask for plain text. An unlabeled fence arrives as `plaintext`. */
+const PLAIN_TEXT_HINTS: ReadonlySet<string> = new Set(["plaintext", "text", "txt"]);
+
+export function isPlainTextHint(language: string | undefined): boolean {
+  return language !== undefined && PLAIN_TEXT_HINTS.has(language.trim().toLowerCase());
+}
+
+/** One uncoloured token per line, the same shape the daemon sends for text it did not tokenise. */
+export function plainLines(code: string): HighlightLine[] {
+  return code.split(/\r?\n/).map((text) => (text === "" ? [] : [{ text, color: null }]));
+}

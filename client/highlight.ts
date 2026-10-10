@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRpc } from "@getpaseo/plugin/client";
-import { highlightRpc, type HighlightLine, type HighlightToken } from "../shared/highlight-rpc";
+import {
+  highlightRpc,
+  isPlainTextHint,
+  plainLines,
+  type HighlightLine,
+  type HighlightToken,
+} from "../shared/highlight-rpc";
 
 export type { HighlightLine, HighlightToken };
 
@@ -42,19 +48,23 @@ const EMPTY_RESPONSE: HighlightResponse = makeResponse(null, null);
  */
 const CACHE_LIMIT = 200;
 
-/** A null entry marks a key the daemon could not answer, so it is not retried. */
+// A null entry marks a key the daemon answered with nothing usable, so it is
+// not asked again. A call that failed is not cached: a block that mounts after
+// a reconnect asks again.
 const cache = new Map<string, HighlightResponse | null>();
 const inFlight = new Map<string, Promise<void>>();
 
-/**
- * Hints the daemon answers unhighlighted on purpose. The author asked for plain
- * text, so an unhighlighted answer to one of these is the right answer and the
- * component must not colour it with the tokeniser instead.
- */
-const PLAIN_HINTS: Record<string, true> = { plaintext: true, text: true, txt: true };
+// Plain text is what the author asked for, so it is built here with no round
+// trip, and the component must not colour it with its tokeniser instead. A diff
+// body still goes to the daemon, which owns the patched file's grammar.
+export function localResponse(request: HighlightRequest): HighlightResponse | null {
+  if (!isPlainTextHint(request.language) || request.diffBodyCode) return null;
+  return makeResponse(plainLines(request.code));
+}
 
-function isPlainHint(language: string | undefined): boolean {
-  return language !== undefined && PLAIN_HINTS[language.trim().toLowerCase()] === true;
+/** The cached answer: undefined when never answered, null when the daemon had none. */
+export function cachedResponse(request: HighlightRequest): HighlightResponse | null | undefined {
+  return cache.get(cacheKey(request));
 }
 
 /**
@@ -163,7 +173,11 @@ type HighlightCall = (input: {
  * One call per key. A second mount of the same block joins the promise already
  * in flight instead of asking the daemon to tokenise the same text again.
  */
-function fetchLines(key: string, call: HighlightCall, request: HighlightRequest): Promise<void> {
+export function fetchLines(
+  call: HighlightCall,
+  request: HighlightRequest,
+  key: string = cacheKey(request),
+): Promise<void> {
   const pending = inFlight.get(key);
   if (pending) return pending;
 
@@ -174,12 +188,9 @@ function fetchLines(key: string, call: HighlightCall, request: HighlightRequest)
     dark: request.dark,
     diffBodyCode: request.diffBodyCode ? request.diffBodyCode : undefined,
   })
-    .then((answer) => {
-      remember(key, readResponse(answer, isPlainHint(request.language)));
-    })
-    .catch(() => {
-      remember(key, null);
-    })
+    .then((answer) => remember(key, readResponse(answer, isPlainTextHint(request.language))))
+    // Left uncached, so the next mount asks again once the host is back.
+    .catch(() => {})
     .finally(() => {
       inFlight.delete(key);
     });
@@ -196,7 +207,12 @@ function fetchLines(key: string, call: HighlightCall, request: HighlightRequest)
 export function useHighlightedLines(request: HighlightRequest): HighlightResponse {
   const call: HighlightCall = useRpc(highlightRpc);
   const { code, language, filename, dark, diffBodyCode } = request;
-  const key = code.length > 0 ? cacheKey(request) : null;
+  const local = useMemo(
+    () =>
+      code.length > 0 ? localResponse({ code, language, filename, dark, diffBodyCode }) : null,
+    [code, language, filename, dark, diffBodyCode],
+  );
+  const key = code.length > 0 && local === null ? cacheKey(request) : null;
   // Reading the cache during render, not in an effect, is what removes the
   // unhighlighted frame on a block that was tokenised once already.
   const cached = key !== null ? (cache.get(key) ?? null) : null;
@@ -205,7 +221,7 @@ export function useHighlightedLines(request: HighlightRequest): HighlightRespons
   useEffect(() => {
     if (key === null || cache.has(key)) return;
     let mounted = true;
-    void fetchLines(key, call, { code, language, filename, dark, diffBodyCode }).then(() => {
+    void fetchLines(call, { code, language, filename, dark, diffBodyCode }, key).then(() => {
       if (mounted) bumpRevision((revision) => revision + 1);
     });
     return () => {
@@ -213,5 +229,5 @@ export function useHighlightedLines(request: HighlightRequest): HighlightRespons
     };
   }, [key, call, code, language, filename, dark, diffBodyCode]);
 
-  return cached ?? EMPTY_RESPONSE;
+  return local ?? cached ?? EMPTY_RESPONSE;
 }

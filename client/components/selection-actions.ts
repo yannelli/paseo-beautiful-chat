@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Platform } from "react-native";
 import type { TextProps, ViewProps } from "react-native";
 import { copyText } from "@getpaseo/plugin/client/react-native";
+import { setChatFindTheme } from "./chat-find";
 import { radius } from "./theme-tokens";
 import type { ExtendedThemeTokens } from "./theme-tokens";
 
@@ -55,6 +56,8 @@ interface Snapshot {
   text: string;
   isCode: boolean;
   rect: DOMRect;
+  /** The plugin surface the selection sits in. */
+  surface: Element;
 }
 
 function elementOf(node: Node | null): HTMLElement | null {
@@ -84,7 +87,7 @@ function readSelection(): Snapshot | null {
   if (!rect || (rect.width === 0 && rect.height === 0)) return null;
 
   const isCode = Boolean(elementOf(range.commonAncestorContainer)?.closest(CODE_SELECTOR));
-  return { text, isCode, rect };
+  return { text, isCode, rect, surface: anchor };
 }
 
 /** Markdown the composer can carry: a fence for code, a blockquote for prose. */
@@ -98,11 +101,19 @@ function quote(snapshot: Snapshot): string {
   );
 }
 
-function composerInput(): HTMLTextAreaElement | HTMLInputElement | null {
-  const marked = document.querySelector(COMPOSER_SELECTOR);
-  if (!marked) return null;
-  if (marked instanceof HTMLTextAreaElement || marked instanceof HTMLInputElement) return marked;
-  return marked.querySelector("textarea, input");
+// The visible composer nearest `origin` in the tree. Hidden tabs keep their
+// composers mounted, so the first one in the document may belong to another chat.
+function composerInput(origin: Element): HTMLTextAreaElement | HTMLInputElement | null {
+  for (let scope: Element | null = origin; scope; scope = scope.parentElement) {
+    for (const marked of Array.from(scope.querySelectorAll(COMPOSER_SELECTOR))) {
+      const input =
+        marked instanceof HTMLTextAreaElement || marked instanceof HTMLInputElement
+          ? marked
+          : marked.querySelector<HTMLTextAreaElement | HTMLInputElement>("textarea, input");
+      if (input && input.getClientRects().length > 0) return input;
+    }
+  }
+  return null;
 }
 
 /**
@@ -116,8 +127,8 @@ function composerInput(): HTMLTextAreaElement | HTMLInputElement | null {
  * send stays behind — hence the native setter plus a bubbling `input` event as
  * the fallback, and a value check before either path claims success.
  */
-function insertIntoComposer(snippet: string): boolean {
-  const input = composerInput();
+function insertIntoComposer(snippet: string, origin: Element): boolean {
+  const input = composerInput(origin);
   if (!input) return false;
 
   const before = input.value;
@@ -223,13 +234,13 @@ function createBar(): Bar {
   let labelTimer = 0;
   let hoverColor = "";
 
-  const makeButton = (label: string, onPress: (button: HTMLButtonElement) => void) => {
+  const makeButton = (label: string, onPress: (button: HTMLButtonElement) => Promise<void>) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "btn";
     button.textContent = label;
     button.dataset.label = label;
-    button.addEventListener("click", () => onPress(button));
+    button.addEventListener("click", () => void onPress(button));
     button.addEventListener("mouseenter", () => {
       button.style.backgroundColor = hoverColor;
     });
@@ -250,24 +261,33 @@ function createBar(): Bar {
     }, RESET_LABEL_MS);
   };
 
-  const copyButton = makeButton("Copy", (button) => {
+  // `copyText` rejects when the clipboard is unavailable or denied, and the
+  // label then says so rather than claiming a copy that did not happen.
+  const copy = async (button: HTMLButtonElement, text: string, done: string, failed: string) => {
+    try {
+      await copyText(text);
+      flash(button, done);
+    } catch {
+      flash(button, failed);
+    }
+  };
+
+  const copyButton = makeButton("Copy", async (button) => {
     const snapshot = readSelection();
     if (!snapshot) return;
-    void copyText(snapshot.text);
-    flash(button, "Copied");
+    await copy(button, snapshot.text, "Copied", "Copy failed");
   });
 
-  const addButton = makeButton("Add to chat", (button) => {
+  const addButton = makeButton("Add to chat", async (button) => {
     const snapshot = readSelection();
     if (!snapshot) return;
-    if (insertIntoComposer(quote(snapshot))) {
+    if (insertIntoComposer(quote(snapshot), snapshot.surface)) {
       flash(button, "Added");
       return;
     }
-    // No composer on screen — the snippet still reaches the clipboard, and the
+    // No composer on screen: the snippet still reaches the clipboard, and the
     // label says which of the two actions actually happened.
-    void copyText(snapshot.text);
-    flash(button, "Copied instead");
+    await copy(button, snapshot.text, "Copied instead", "Not added");
   });
 
   // The bar keeps the selection alive: a press inside it must not move the
@@ -402,6 +422,8 @@ export function useSelectionActions(tokens: ExtendedThemeTokens, enabled: boolea
   }, [enabled]);
 
   useEffect(() => {
+    // The find bar has no theme of its own; every surface keeps it current.
+    setChatFindTheme({ surface: tokens.surface0, foreground: tokens.foreground });
     if (!enabled) return;
     controller?.bar.setTheme(tokens);
   }, [tokens, enabled]);

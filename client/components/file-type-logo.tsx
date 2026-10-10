@@ -1,6 +1,7 @@
 import React from "react";
 import { Image } from "react-native";
 import { MARK_BITMAPS } from "./mark-bitmaps";
+import type { ExtendedThemeTokens } from "./theme-tokens";
 
 export type SupportedFileType =
   | "typescript"
@@ -24,7 +25,12 @@ interface FileTypeLogoProps {
   language?: string;
   size?: "sm" | "md" | "lg";
   foregroundColor?: string;
+  /** Tints the page, folder and markdown marks; `foregroundColor` is the fallback. */
+  tokens?: Pick<ExtendedThemeTokens, "foreground" | "foregroundMuted" | "warning">;
 }
+
+/** Legible on light and dark themes alike, for a caller that passes no colour. */
+const NEUTRAL_MARK = "#7A7F87";
 
 const LANGUAGE_ALIASES: Record<string, SupportedFileType> = {
   typescript: "typescript",
@@ -125,18 +131,20 @@ export function FileTypeLogo({
   language,
   size = "md",
   foregroundColor,
+  tokens,
 }: FileTypeLogoProps) {
   const type = detectFileType(filename, language);
   const { box } = DIMENSIONS[size];
   const brand = MARK_BITMAPS[`devicon:${type}`];
+  const foreground = tokens?.foreground ?? foregroundColor;
 
   if (brand) {
     return (
       <Image
         source={{ uri: brand }}
         style={
-          type === "markdown" && foregroundColor
-            ? { width: box, height: box, tintColor: foregroundColor }
+          type === "markdown" && foreground
+            ? { width: box, height: box, tintColor: foreground }
             : { width: box, height: box }
         }
         resizeMode="contain"
@@ -153,7 +161,9 @@ export function FileTypeLogo({
       style={{
         width: box,
         height: box,
-        tintColor: isDirectory ? "#EAB308" : "#94A3B8",
+        tintColor: isDirectory
+          ? (tokens?.warning ?? foregroundColor ?? NEUTRAL_MARK)
+          : (tokens?.foregroundMuted ?? foregroundColor ?? NEUTRAL_MARK),
       }}
       resizeMode="contain"
       accessibilityLabel={isDirectory ? "Folder" : "File"}

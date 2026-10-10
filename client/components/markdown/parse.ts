@@ -39,6 +39,8 @@ export interface MdListItem {
   index: number;
   /** Set only by `- [ ]` / `- [x]`; an ordinary bullet leaves it undefined. */
   checked?: boolean;
+  /** Fenced code indented under the item, and any prose after it, in order. */
+  blocks?: MdBlock[];
 }
 
 export type MdBlock =
@@ -63,17 +65,18 @@ const ORDERED_RE = /^([ \t]*)(\d{1,9})[.)][ \t]+(.*)$/;
 const TASK_RE = /^\[([ xX])\][ \t]*(.*)$/;
 const DELIMITER_CELL_RE = /^:?-+:?$/;
 const WORD_RE = /[\w\u00c0-\uffff]/;
-const TRAILING_SPACE_RE = /[ \t]+$/;
 // ASCII punctuation is exactly what a backslash may escape in markdown.
 const ESCAPABLE_RE = /[!-\/:-@\[-`{-~]/;
 // Sticky, so a candidate is tested in place instead of slicing the line.
-const URL_RE = /(?:https?:\/\/|www\.)[^\s<>()[\]]+/y;
+// Parentheses are allowed here; `trimUrl` drops the ones the URL did not open.
+const URL_RE = /(?:https?:\/\/|www\.)[^\s<>[\]]+/y;
+/** Sentence punctuation that trails a bare URL belongs to the prose. */
+const URL_TRAILING_PUNCTUATION = ".,;:!?'\"";
+/** What is left once the tail is trimmed must still hold more than a scheme. */
+const URL_HEAD_RE = /^(?:https?:\/\/|www\.)./;
 
 /** Emphasis inside emphasis is rare and cheap to bound; deeper text stays flat. */
 const MAX_INLINE_DEPTH = 4;
-
-/** Two spaces, or a trailing backslash, are the author asking for a new line. */
-const HARD_BREAK_RE = /(?: {2,}|\\)$/;
 
 export function parseMarkdown(text: string): MdBlock[] {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
@@ -89,7 +92,9 @@ export function parseMarkdown(text: string): MdBlock[] {
 
     const fence = FENCE_RE.exec(line);
     if (fence !== null) {
-      index = readFence(lines, index, fence, blocks);
+      const read = readFence(lines, index, fence, indentWidth(line));
+      blocks.push(read.block);
+      index = read.next;
       continue;
     }
 
@@ -97,7 +102,7 @@ export function parseMarkdown(text: string): MdBlock[] {
     if (heading !== null) {
       const hashes = (heading[1] ?? "#").length;
       const level = (hashes > 4 ? 4 : hashes) as MdHeadingLevel;
-      const title = (heading[2] ?? "").replace(TRAILING_SPACE_RE, "");
+      const title = (heading[2] ?? "").trimEnd();
       blocks.push({ kind: "heading", level, spans: parseInline(title) });
       index++;
       continue;
@@ -149,7 +154,12 @@ function startsBlock(lines: string[], index: number): boolean {
  * degrades to `plain` carrying its own source — including the opening fence, so
  * nothing the author typed disappears while the rest of the block arrives.
  */
-function readFence(lines: string[], start: number, match: RegExpExecArray, out: MdBlock[]): number {
+function readFence(
+  lines: string[],
+  start: number,
+  match: RegExpExecArray,
+  indent: number,
+): { block: MdBlock; next: number } {
   const marker = match[1] ?? "```";
   const language = (match[2] ?? "").trim();
   const closeRe = marker.startsWith("~") ? /^~+[ \t]*$/ : /^`+[ \t]*$/;
@@ -165,17 +175,32 @@ function readFence(lines: string[], start: number, match: RegExpExecArray, out: 
       index++;
       break;
     }
-    body.push(line);
+    // Each line loses up to the opening fence's indent, so code nested under a
+    // list item does not keep the item's indent.
+    body.push(stripIndent(line, indent));
     index++;
   }
 
   if (!closed) {
-    out.push({ kind: "plain", text: [lines[start] ?? "", ...body].join("\n") });
-    return lines.length;
+    const opening = stripIndent(lines[start] ?? "", indent);
+    return { block: { kind: "plain", text: [opening, ...body].join("\n") }, next: lines.length };
   }
 
-  out.push({ kind: "code", code: body.join("\n"), language });
-  return index;
+  return { block: { kind: "code", code: body.join("\n"), language }, next: index };
+}
+
+/** Removes up to `columns` columns of leading blanks, a tab counting as four. */
+function stripIndent(line: string, columns: number): string {
+  let width = 0;
+  let index = 0;
+  while (index < line.length && width < columns) {
+    const ch = line[index];
+    if (ch === " ") width += 1;
+    else if (ch === "\t") width += 4;
+    else break;
+    index++;
+  }
+  return line.slice(index);
 }
 
 /**
@@ -223,6 +248,8 @@ interface RawItem {
   ordered: boolean;
   index: number;
   checked?: boolean;
+  /** Nested code blocks, and the raw prose that follows each one. */
+  blocks: Array<MdBlock | string>;
 }
 
 /**
@@ -250,8 +277,21 @@ function readList(lines: string[], start: number, out: MdBlock[]): number {
       continue;
     }
 
-    // A rule, a heading or a fence ends the list rather than being swallowed as
-    // item text: losing a code block inside a bullet is worse than ending early.
+    // A fence indented under an item belongs to that item. It is tested on the
+    // line without its indent, so four or more columns still read as a fence.
+    const indent = indentWidth(raw);
+    const previous = items[items.length - 1];
+    const nested = previous !== undefined && indent >= 2 ? FENCE_RE.exec(raw.trimStart()) : null;
+    if (previous !== undefined && nested !== null) {
+      const read = readFence(lines, index, nested, indent);
+      previous.blocks.push(read.block);
+      blankSeen = false;
+      index = read.next;
+      continue;
+    }
+
+    // A rule, a heading or a flush-left fence ends the list rather than being
+    // swallowed as item text.
     if (RULE_RE.test(raw) || HEADING_RE.test(raw) || FENCE_RE.test(raw)) break;
 
     const bullet = BULLET_RE.exec(raw);
@@ -279,6 +319,7 @@ function readList(lines: string[], start: number, out: MdBlock[]): number {
         depth,
         ordered: isOrdered,
         index: isOrdered ? Number(marker[2] ?? "1") : items.length + 1,
+        blocks: [],
       };
       if (task !== null) item.checked = (task[1] ?? " ").toLowerCase() === "x";
       items.push(item);
@@ -287,13 +328,16 @@ function readList(lines: string[], start: number, out: MdBlock[]): number {
       continue;
     }
 
-    const previous = items[items.length - 1];
     if (previous === undefined) break;
     // After a blank line only indented prose still belongs to the item; flush
     // left text is the paragraph that follows the list.
-    if (blankSeen && indentWidth(raw) < 2) break;
+    if (blankSeen && indent < 2) break;
     if (blankSeen && startsBlock(lines, index)) break;
-    previous.text = `${previous.text} ${raw.trim()}`;
+    // Prose after a nested fence follows the code instead of joining the lead.
+    const tail = previous.blocks[previous.blocks.length - 1];
+    if (tail === undefined) previous.text = `${previous.text} ${raw.trim()}`;
+    else if (typeof tail !== "string") previous.blocks.push(raw.trim());
+    else previous.blocks[previous.blocks.length - 1] = `${tail} ${raw.trim()}`;
     blankSeen = false;
     index++;
   }
@@ -306,7 +350,12 @@ function readList(lines: string[], start: number, out: MdBlock[]): number {
   const parsed: MdListItem[] = [];
   for (const item of items) {
     const spans = parseInline(item.text.trim());
-    if (spans.length === 0) continue;
+    const blocks: MdBlock[] = [];
+    for (const part of item.blocks) {
+      if (typeof part !== "string") blocks.push(part);
+      else if (part !== "") blocks.push({ kind: "paragraph", spans: parseInline(part) });
+    }
+    if (spans.length === 0 && blocks.length === 0) continue;
     const entry: MdListItem = {
       spans,
       depth: item.depth,
@@ -314,6 +363,7 @@ function readList(lines: string[], start: number, out: MdBlock[]): number {
       index: item.index,
     };
     if (item.checked !== undefined) entry.checked = item.checked;
+    if (blocks.length > 0) entry.blocks = blocks;
     parsed.push(entry);
   }
   if (parsed.length === 0) return index;
@@ -477,8 +527,10 @@ function joinSoft(lines: string[]): string {
   let out = "";
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index] ?? "";
-    const hard = HARD_BREAK_RE.test(line);
-    out += line.replace(TRAILING_SPACE_RE, "").replace(/\\$/, "");
+    // Two spaces, or a trailing backslash, are the author asking for a new line.
+    const hard = line.endsWith("  ") || line.endsWith("\\");
+    const trimmed = line.trimEnd();
+    out += trimmed.endsWith("\\") ? trimmed.slice(0, -1) : trimmed;
     if (index < lines.length - 1) out += hard ? "\n" : " ";
   }
   return out;
@@ -500,6 +552,11 @@ function parseInline(src: string, depth = 0): MdInline[] {
   const out: MdInline[] = [];
   let buffer = "";
   let index = 0;
+  // A delimiter kind that found no closer from one position finds none further
+  // on, so it is searched for once. Bracket partners come from one pass each.
+  const exhausted = new Set<string>();
+  let squares: Int32Array | null = null;
+  let parens: Int32Array | null = null;
 
   const flush = (): void => {
     if (buffer !== "") {
@@ -523,26 +580,33 @@ function parseInline(src: string, depth = 0): MdInline[] {
     if (ch === "`") {
       let run = 1;
       while (src[index + run] === "`") run++;
-      const close = src.indexOf("`".repeat(run), index + run);
-      if (close > -1) {
-        flush();
-        let text = src.slice(index + run, close);
-        // One padding space each side is the escape for code that starts or
-        // ends with a backtick; it is not part of the code.
-        if (text.length > 2 && text.startsWith(" ") && text.endsWith(" ")) {
-          text = text.slice(1, -1);
-        }
-        out.push({ kind: "codeSpan", text });
-        index = close + run;
+      const key = `code${run}`;
+      const close = exhausted.has(key) ? -1 : src.indexOf("`".repeat(run), index + run);
+      if (close === -1) {
+        // An unclosed run is literal as a whole, so its tail is not re-read.
+        exhausted.add(key);
+        buffer += src.slice(index, index + run);
+        index += run;
         continue;
       }
+      flush();
+      let text = src.slice(index + run, close);
+      // One padding space each side is the escape for code that starts or
+      // ends with a backtick; it is not part of the code.
+      if (text.length > 2 && text.startsWith(" ") && text.endsWith(" ")) {
+        text = text.slice(1, -1);
+      }
+      out.push({ kind: "codeSpan", text });
+      index = close + run;
+      continue;
     }
 
     // `***both***` is bold and italic at once. It is tested before the `**`
     // branch, which would close on the third star and leave a stray marker.
-    if (ch === "*" && src[index + 1] === "*" && src[index + 2] === "*") {
+    if (ch === "*" && src[index + 1] === "*" && src[index + 2] === "*" && !exhausted.has("***")) {
       const close = src.indexOf("***", index + 3);
-      if (close > index + 3) {
+      if (close === -1) exhausted.add("***");
+      else if (close > index + 3) {
         flush();
         out.push({
           kind: "strong",
@@ -552,9 +616,10 @@ function parseInline(src: string, depth = 0): MdInline[] {
         continue;
       }
     }
-    if ((ch === "*" || ch === "~") && src[index + 1] === ch) {
+    if ((ch === "*" || ch === "~") && src[index + 1] === ch && !exhausted.has(ch + ch)) {
       const close = src.indexOf(ch + ch, index + 2);
-      if (close > index + 2) {
+      if (close === -1) exhausted.add(ch + ch);
+      else if (close > index + 2) {
         flush();
         out.push({
           kind: ch === "*" ? "strong" : "strike",
@@ -565,9 +630,10 @@ function parseInline(src: string, depth = 0): MdInline[] {
       }
     }
 
-    if (ch === "*" || ch === "_") {
+    if ((ch === "*" || ch === "_") && !exhausted.has(ch) && canOpenEmphasis(src, index, ch)) {
       const close = findEmphasisClose(src, index, ch);
-      if (close > index + 1) {
+      if (close === -1) exhausted.add(ch);
+      else if (close > index + 1) {
         flush();
         out.push({ kind: "emphasis", spans: parseInline(src.slice(index + 1, close), depth + 1) });
         index = close + 1;
@@ -577,9 +643,11 @@ function parseInline(src: string, depth = 0): MdInline[] {
 
     if (ch === "[" || (ch === "!" && src[index + 1] === "[")) {
       const open = ch === "!" ? index + 1 : index;
-      const labelEnd = matchBracket(src, open, "[", "]");
+      if (squares === null) squares = bracketPartners(src, "[", "]");
+      const labelEnd = squares[open] ?? -1;
       if (labelEnd > -1 && src[labelEnd + 1] === "(") {
-        const hrefEnd = matchBracket(src, labelEnd + 1, "(", ")");
+        if (parens === null) parens = bracketPartners(src, "(", ")");
+        const hrefEnd = parens[labelEnd + 1] ?? -1;
         if (hrefEnd > -1) {
           const href = cleanHref(src.slice(labelEnd + 2, hrefEnd));
           const label = src.slice(open + 1, labelEnd);
@@ -599,9 +667,8 @@ function parseInline(src: string, depth = 0): MdInline[] {
       URL_RE.lastIndex = index;
       const match = URL_RE.exec(src);
       if (match !== null) {
-        // Sentence punctuation that trails a bare URL belongs to the prose.
-        const url = (match[0] ?? "").replace(/[.,;:!?'"]+$/, "");
-        if (url !== "") {
+        const url = trimUrl(match[0] ?? "");
+        if (URL_HEAD_RE.test(url)) {
           flush();
           out.push({
             kind: "link",
@@ -622,15 +689,18 @@ function parseInline(src: string, depth = 0): MdInline[] {
   return out;
 }
 
+/** A lone `*` or `_` opens only against text, and `_` only at a word start. */
+function canOpenEmphasis(src: string, open: number, marker: string): boolean {
+  if ((src[open + 1] ?? " ").trim() === "") return false;
+  return marker !== "_" || !isWordChar(src[open - 1] ?? "");
+}
+
 /**
  * A single `*` or `_` closes on the next lone marker that does not sit against
  * whitespace. `_` additionally needs word boundaries on both ends, so
  * `snake_case_name` stays one word instead of turning half of it italic.
  */
 function findEmphasisClose(src: string, open: number, marker: string): number {
-  if ((src[open + 1] ?? " ").trim() === "") return -1;
-  if (marker === "_" && isWordChar(src[open - 1] ?? "")) return -1;
-
   for (let index = open + 1; index < src.length; index++) {
     const ch = src[index];
     if (ch === "\\") {
@@ -649,22 +719,46 @@ function findEmphasisClose(src: string, open: number, marker: string): number {
   return -1;
 }
 
-/** Index of the delimiter closing the one at `start`, or -1 when it never closes. */
-function matchBracket(src: string, start: number, open: string, close: string): number {
-  let depth = 0;
-  for (let index = start; index < src.length; index++) {
+/**
+ * For each `open` delimiter, the index of the one closing it, or -1 when it
+ * never closes. One pass with a stack, so a run of unclosed brackets is linear.
+ */
+function bracketPartners(src: string, open: string, close: string): Int32Array {
+  const partners = new Int32Array(src.length).fill(-1);
+  const stack: number[] = [];
+  for (let index = 0; index < src.length; index++) {
     const ch = src[index];
     if (ch === "\\") {
       index++;
       continue;
     }
-    if (ch === open) depth++;
+    if (ch === open) stack.push(index);
     else if (ch === close) {
-      depth--;
-      if (depth === 0) return index;
+      const start = stack.pop();
+      if (start !== undefined) partners[start] = index;
     }
   }
-  return -1;
+  return partners;
+}
+
+/**
+ * A bare URL keeps parentheses it opened itself, as in `Foo_(bar)`, but not a
+ * `)` closing the prose around it, nor sentence punctuation after it.
+ */
+function trimUrl(raw: string): string {
+  let balance = 0;
+  for (let index = 0; index < raw.length; index++) {
+    if (raw[index] === "(") balance++;
+    else if (raw[index] === ")") balance--;
+  }
+  let end = raw.length;
+  while (end > 0) {
+    const ch = raw[end - 1] ?? "";
+    if (ch === ")" && balance < 0) balance++;
+    else if (!URL_TRAILING_PUNCTUATION.includes(ch)) break;
+    end--;
+  }
+  return raw.slice(0, end);
 }
 
 function cleanHref(raw: string): string {
@@ -674,14 +768,4 @@ function cleanHref(raw: string): string {
   if (space > -1) href = href.slice(0, space);
   if (href.startsWith("<") && href.endsWith(">")) href = href.slice(1, -1);
   return href;
-}
-
-/** The text a reader sees, for measuring and for copy targets. */
-export function inlineToText(spans: MdInline[]): string {
-  let out = "";
-  for (const span of spans) {
-    if (span.kind === "text" || span.kind === "codeSpan") out += span.text;
-    else out += inlineToText(span.spans);
-  }
-  return out;
 }

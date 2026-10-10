@@ -23,7 +23,12 @@ interface ProviderLogoProps {
   provider: string;
   size?: number;
   showLabel?: boolean;
+  /** Paint for a mark with no brand hue (Grok, Ollama, unknown). Pass the theme's foreground. */
+  color?: string;
 }
+
+/** Legible on light and dark themes alike, for a caller that passes no colour. */
+const NEUTRAL_MARK = "#7A7F87";
 
 export function normalizeProvider(provider: string): KnownProvider {
   const p = (provider || "").toLowerCase();
@@ -69,13 +74,14 @@ function markId(provider: KnownProvider): string | undefined {
   return undefined;
 }
 
-export function ProviderLogo({ provider, size = 14, showLabel = false }: ProviderLogoProps) {
+export function ProviderLogo({ provider, size = 14, showLabel = false, color }: ProviderLogoProps) {
   const normalized = normalizeProvider(provider);
   const config = PROVIDER_CONFIGS[normalized];
   const id = useMemo(() => markId(normalized), [normalized]);
   const uri = id ? MARK_BITMAPS[id] : undefined;
+  const hue = config.brandColor ?? color ?? NEUTRAL_MARK;
   // A monochrome mark is rasterised white, so the brand hue arrives as a tint.
-  const tint = id && MONO_MARKS.has(id) ? config.brandColor : undefined;
+  const tint = id && MONO_MARKS.has(id) ? hue : undefined;
 
   return (
     <View style={styles.row}>
@@ -89,24 +95,14 @@ export function ProviderLogo({ provider, size = 14, showLabel = false }: Provide
           accessibilityLabel={config.displayName}
         />
       ) : (
-        <View
-          style={[styles.fallback, { width: size, height: size, borderColor: config.brandColor }]}
-        >
-          <Text
-            style={[
-              styles.fallbackLabel,
-              { fontSize: size * 0.6, color: config.brandColor },
-              unselectable,
-            ]}
-          >
+        <View style={[styles.fallback, { width: size, height: size, borderColor: hue }]}>
+          <Text style={[styles.fallbackLabel, { fontSize: size * 0.6, color: hue }, unselectable]}>
             {config.displayName.slice(0, 1)}
           </Text>
         </View>
       )}
       {showLabel ? (
-        <Text style={[styles.label, { color: config.brandColor }, unselectable]}>
-          {config.displayName}
-        </Text>
+        <Text style={[styles.label, { color: hue }, unselectable]}>{config.displayName}</Text>
       ) : null}
     </View>
   );
@@ -114,8 +110,8 @@ export function ProviderLogo({ provider, size = 14, showLabel = false }: Provide
 
 interface ProviderMeta {
   displayName: string;
-  /** Also the fill for a monochrome mark, so it stays legible on either theme. */
-  brandColor: string;
+  /** Also the fill for a monochrome mark. Null: a white mark takes the theme's colour. */
+  brandColor: string | null;
 }
 
 const PROVIDER_CONFIGS: Record<KnownProvider, ProviderMeta> = {
@@ -129,9 +125,9 @@ const PROVIDER_CONFIGS: Record<KnownProvider, ProviderMeta> = {
   opencode: { displayName: "OpenCode", brandColor: "#38BDF8" },
   minimax: { displayName: "MiniMax", brandColor: "#E2167E" },
   deepseek: { displayName: "DeepSeek", brandColor: "#4D6BFE" },
-  grok: { displayName: "Grok", brandColor: "#E5E7EB" },
-  ollama: { displayName: "Ollama", brandColor: "#CBD5E1" },
-  generic: { displayName: "Agent", brandColor: "#94A3B8" },
+  grok: { displayName: "Grok", brandColor: null },
+  ollama: { displayName: "Ollama", brandColor: null },
+  generic: { displayName: "Agent", brandColor: null },
 };
 
 const styles = StyleSheet.create({

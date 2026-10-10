@@ -1,50 +1,27 @@
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
+import { openExternalUrl } from "@getpaseo/plugin/client";
 
-/**
- * Opens an http(s) link the way the host does.
- *
- * Three sinks, in the host's own order of preference
- * (`app/src/utils/open-external-url.ts`):
- *
- * 1. On Electron the desktop bridge (`window.paseoDesktop.opener.openUrl`,
- *    read in `desktop/electron/host.ts:7`) hands the URL to the OS browser.
- *    Without it a link opens inside the app window, which has no chrome to
- *    navigate back from.
- * 2. On plain web, `window.open` with `noopener,noreferrer`.
- * 3. On native, `Linking.openURL`.
- *
- * The scheme allowlist mirrors the host's: a link in a model's reply is
- * untrusted input, and `javascript:` or `file:` must never reach a sink.
- */
-const ALLOWED = new Set(["http:", "https:", "mailto:"]);
+// React Native's URL polyfill does not implement `protocol`, so the scheme is read directly.
+const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
 
-interface DesktopOpener {
-  opener?: { openUrl?: (url: string) => unknown };
+/** The link's scheme when it is one a reader may open: model output is untrusted input. */
+export function linkScheme(url: string): "http" | "mailto" | undefined {
+  const scheme = url.trim().match(SCHEME)?.[1]?.toLowerCase();
+  if (scheme === "http" || scheme === "https") return "http";
+  if (scheme === "mailto") return "mailto";
+  return undefined;
 }
 
-function allowed(url: string): boolean {
-  try {
-    return ALLOWED.has(new URL(url).protocol);
-  } catch {
-    return false;
-  }
-}
-
+/** Opens a link outside Paseo: the system browser on desktop and native, a new tab on web. */
 export function openLink(url: string): void {
-  if (!allowed(url)) return;
-
-  if (Platform.OS === "web") {
-    const bridge = (globalThis as { paseoDesktop?: DesktopOpener }).paseoDesktop;
-    const openUrl = bridge?.opener?.openUrl;
-    if (typeof openUrl === "function") {
-      void openUrl(url);
-      return;
-    }
-    globalThis.open?.(url, "_blank", "noopener,noreferrer");
-    return;
+  const scheme = linkScheme(url);
+  if (scheme === "http") {
+    openExternalUrl(url.trim()).catch((error: unknown) => {
+      console.warn("[beautiful-chat] Could not open link", error);
+    });
+  } else if (scheme === "mailto") {
+    Linking.openURL(url.trim()).catch(() => {
+      // No mail handler on this device; nothing useful to show.
+    });
   }
-
-  void Linking.openURL(url).catch(() => {
-    // No handler for the scheme on this device; nothing useful to show.
-  });
 }

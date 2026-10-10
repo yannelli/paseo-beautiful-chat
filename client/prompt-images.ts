@@ -35,7 +35,7 @@ export function extractPromptImages(item: unknown): PromptImages {
   const uris: string[] = [];
   let announced = false;
 
-  const visit = (value: unknown, depth: number, underAttachment: boolean) => {
+  const visit = (value: unknown, depth: number) => {
     if (depth > 4 || value === null || value === undefined) return;
 
     if (typeof value === "string") {
@@ -44,7 +44,7 @@ export function extractPromptImages(item: unknown): PromptImages {
     }
 
     if (Array.isArray(value)) {
-      for (const entry of value) visit(entry, depth + 1, underAttachment);
+      for (const entry of value) visit(entry, depth + 1);
       return;
     }
 
@@ -68,15 +68,17 @@ export function extractPromptImages(item: unknown): PromptImages {
 
     for (const [key, nested] of Object.entries(record)) {
       if (key === "text") continue;
-      const isAttachmentKey = ATTACHMENT_KEYS.has(key);
-      if (isAttachmentKey && ((Array.isArray(nested) && nested.length > 0) || asRecord(nested))) {
+      if (
+        ATTACHMENT_KEYS.has(key) &&
+        ((Array.isArray(nested) && nested.length > 0) || asRecord(nested))
+      ) {
         announced = true;
       }
-      visit(nested, depth + 1, underAttachment || isAttachmentKey);
+      visit(nested, depth + 1);
     }
   };
 
-  visit(item, 0, false);
+  visit(item, 0);
 
   const unique = [...new Set(uris)];
   return { uris: unique, hasUnrenderable: announced && unique.length === 0 };

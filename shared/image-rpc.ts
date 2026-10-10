@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { stripSelector } from "./file-rpc";
 
 /**
  * Reads an image file so the chat can show it.
@@ -29,3 +30,30 @@ export const imageRpc = defineRpc({
     error: z.string().nullable(),
   }),
 });
+
+// Image types worth previewing, by lower-case extension, with each data URI's
+// mime. A Map, so a name such as `x.constructor` finds nothing.
+export const IMAGE_MIMES: ReadonlyMap<string, string> = new Map([
+  ["png", "image/png"],
+  ["jpg", "image/jpeg"],
+  ["jpeg", "image/jpeg"],
+  ["gif", "image/gif"],
+  ["webp", "image/webp"],
+  ["avif", "image/avif"],
+  ["bmp", "image/bmp"],
+  ["ico", "image/x-icon"],
+  ["svg", "image/svg+xml"],
+]);
+
+/** The lower-case extension of the last path segment, selector removed, or "". */
+export function pathExtension(path: string): string {
+  const parts = stripSelector(path).split(/[\\/]/);
+  const base = parts[parts.length - 1] ?? "";
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** True when this path names a file the chat can draw rather than tokenise. */
+export function isImagePath(path: string | undefined): boolean {
+  return path !== undefined && IMAGE_MIMES.has(pathExtension(path));
+}

@@ -1,7 +1,10 @@
 {
   "id": "beautiful-chat",
+  "name": "Beautiful Chat",
+  "description": "Themed, syntax-highlighted cards for agent tool calls, reasoning, checklists, prompts, and replies",
+  "media": ["images/hero.png", "images/thread.png"],
   "requirements": {
-    "paseo": ">=0.8.0"
+    "paseo": ">=0.11.0"
   },
-  "build": [["npm", "ci", "--include=dev"]]
+  "build": [["npm", "ci", "--omit=dev"]]
 }

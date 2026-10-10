@@ -15,13 +15,8 @@ export const selectableSurface = (
   Platform.OS === "web" ? { userSelect: "text", cursor: "auto" } : {}
 ) as ViewStyle;
 
-/**
- * Native has no inheritance: React Native maps `userSelect` on a Text to the
- * `selectable` prop and ignores it on a View. Text that carries agent or user
- * data therefore also needs `selectable` — see the sibling helper below for the
- * text that must stay out of the clipboard.
- */
-export const selectableTextStyle = { userSelect: "text" } as TextStyle;
+// Native has no inheritance: React Native ignores `userSelect` on a View, so
+// text that carries agent or user data also needs the `selectable` prop.
 
 /**
  * Decorative glyphs are real characters (`✦`, `⛨`, `≡`), and control labels are

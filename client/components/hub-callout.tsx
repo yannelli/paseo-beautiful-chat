@@ -2,7 +2,9 @@ import React, { useMemo, useState } from "react";
 import { Image, View, Text, Pressable, StyleSheet } from "react-native";
 import type { ImageStyle, TextStyle, ViewStyle } from "react-native";
 import { Glyph } from "./glyph";
-import { radius, withAlpha } from "./theme-tokens";
+import { radius } from "./theme-tokens";
+import { formatAge, formatDuration } from "./format";
+import { useNow } from "./use-now";
 import type { ExtendedThemeTokens } from "./theme-tokens";
 import { selectableSurface, unselectable } from "./selection";
 import { selectionSurface, selectionCodeText } from "./selection-actions";
@@ -36,6 +38,8 @@ interface HubCalloutProps {
  */
 export function HubCallout({ data, tokens }: HubCalloutProps) {
   const styles = useHubStyles(tokens);
+  // Re-renders the card on the shared clock so "2m ago" keeps advancing.
+  useNow();
 
   return (
     <View {...selectionSurface} style={styles.container}>
@@ -84,32 +88,6 @@ interface HubViewProps<T> {
 }
 
 /* ---------------------------------------------------------------- formatting */
-
-/**
- * A gap in human units — `820ms`, `1.4s`, `2m 5s`, `1h 3m`. A raw millisecond
- * count in a row forces the reader to divide, so nothing prints one.
- */
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-
-  const minutes = Math.floor(seconds / 60);
-  const restSeconds = Math.round(seconds - minutes * 60);
-  if (minutes < 60) return restSeconds > 0 ? `${minutes}m ${restSeconds}s` : `${minutes}m`;
-
-  const hours = Math.floor(minutes / 60);
-  const restMinutes = minutes - hours * 60;
-  return restMinutes > 0 ? `${hours}h ${restMinutes}m` : `${hours}h`;
-}
-
-/** An epoch-millisecond stamp as an age. A wall clock says less than the gap. */
-function formatAge(ts: number): string {
-  const gap = formatDuration(Date.now() - ts);
-  return gap ? `${gap} ago` : "just now";
-}
 
 /* -------------------------------------------------------------------- tones */
 

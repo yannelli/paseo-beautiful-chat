@@ -1,11 +1,13 @@
 {
   "name": "beautiful-chat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Paseo plugin: a beautiful chat for OMP tools, reasoning, prompts, and tasks",
+  "description": "Paseo plugin: themed, syntax-highlighted cards for agent tool calls, reasoning, checklists, prompts, and replies",
   "license": "MIT",
+  "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ./test/ts-resolve.mjs --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@shikijs/core": "^4.0.2",
@@ -14,7 +16,7 @@
     "@shikijs/themes": "^4.0.2"
   },
   "devDependencies": {
-    "@getpaseo/plugin": "0.8.0",
+    "@getpaseo/plugin": "0.11.2",
     "@tanstack/react-query": "^5.90.11",
     "@types/node": "^22.15.3",
     "@types/react": "~19.2.0",

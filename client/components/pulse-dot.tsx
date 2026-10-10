@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { Animated, Platform } from "react-native";
+import { useReducedMotion } from "./motion";
 
 interface PulseDotProps {
   color: string;
@@ -18,9 +19,10 @@ interface PulseDotProps {
  */
 export function PulseDot({ color, size = 6, active = true }: PulseDotProps) {
   const opacity = useRef(new Animated.Value(1)).current;
+  const still = useReducedMotion();
 
   useEffect(() => {
-    if (!active) {
+    if (!active || still) {
       opacity.setValue(1);
       return;
     }
@@ -44,7 +46,7 @@ export function PulseDot({ color, size = 6, active = true }: PulseDotProps) {
     return () => {
       loop.stop();
     };
-  }, [active, opacity]);
+  }, [active, opacity, still]);
 
   return (
     <Animated.View

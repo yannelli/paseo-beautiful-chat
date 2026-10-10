@@ -20,7 +20,8 @@ function readSubject(record: Record<string, unknown>): string | undefined {
     pullRequest ??
     asString(record.run) ??
     asString(record.branch) ??
-    asString(record.title)
+    asString(record.title) ??
+    asString(record.subject)
   );
 }
 
@@ -59,6 +60,8 @@ function languageFor(path: string | undefined): string | undefined {
 }
 
 const URL_IN_TEXT = /https?:\/\/[^\s"'<>)]+/;
+/** Sentence punctuation after a URL is prose, not part of the address. */
+const URL_TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 
 /**
  * A run or check line. `gh` separates the columns with tabs, and a terminal
@@ -71,7 +74,7 @@ const CHECK_LINE =
 const SEARCH_LINE = /^([\w./\\-]+\.[\w]+):(\d+):/;
 
 /** `#125 Add beautiful-chat`, or the number inside a pull-request URL. */
-const PR_LINE = /(?:^|\s)#(\d+)\b\s*(.*)$/;
+const PR_LINE = /(?:^|\s)#(\d+)\b[ \t]*(.*)$/m;
 const PR_URL = /\/pull\/(\d+)\b/;
 
 function checkRows(text: string): GitHubToolData["rows"] {
@@ -127,17 +130,22 @@ function pullRequestRows(text: string, record: Record<string, unknown>): GitHubT
 /**
  * Reads a `github` device call into the record its card draws.
  *
- * The call arrives as a write to `xd://github`: `request` is a JSON op, and
- * `reply` is whatever the op printed. Everything here is derived from those
- * two strings, and an op with no recognised shape keeps its reply as text
- * rather than being forced into rows.
+ * Before Paseo 0.11 the call arrives as a write to `xd://github`: `request` is
+ * a JSON op, and `reply` is whatever the op printed. Paseo 0.11 reports only a
+ * label, `<op> <target>`, which `requestIsLabel` marks. An op with no
+ * recognised shape keeps its reply as text rather than being forced into rows.
  */
 export function buildGitHubData(
   request: string | undefined,
   reply: string | undefined,
+  requestIsLabel = false,
 ): GitHubToolData | undefined {
   let record: Record<string, unknown> = {};
-  if (request) {
+  if (request && requestIsLabel) {
+    const [op, ...subject] = request.trim().split(/\s+/);
+    // The host falls back to the device name when the call names no op.
+    if (op && op !== "github") record = { op, subject: subject.join(" ") };
+  } else if (request) {
     try {
       const parsed: unknown = JSON.parse(request);
       if (parsed && typeof parsed === "object") record = parsed as Record<string, unknown>;
@@ -154,16 +162,16 @@ export function buildGitHubData(
   if (repo) data.repo = repo;
   const subject = readSubject(record);
   if (subject) data.subject = subject;
-  if (request) data.request = request;
+  if (request && !requestIsLabel) data.request = request;
   if (!reply) return data;
 
-  const link = reply.match(URL_IN_TEXT)?.[0];
+  const link = reply.match(URL_IN_TEXT)?.[0]?.replace(URL_TRAILING_PUNCTUATION, "");
   if (link) data.link = link;
 
   // `file_read` answers with the file itself, which belongs on the code
   // surface under its own name rather than in a terminal frame.
   if (op === "file_read") {
-    const name = asString(record.path);
+    const name = asString(record.path) ?? asString(record.subject);
     data.file = { name: name ?? "file", code: reply };
     const language = languageFor(name);
     if (language) data.file.language = language;

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, type ReactNode } from "react";
 import { Animated, Platform } from "react-native";
+import { useReducedMotion } from "./motion";
 
 interface BreatheProps {
   children: ReactNode;
@@ -21,9 +22,10 @@ interface BreatheProps {
  */
 export function Breathe({ children, active = true, depth = 1.18, durationMs = 900 }: BreatheProps) {
   const scale = useRef(new Animated.Value(1)).current;
+  const still = useReducedMotion();
 
   useEffect(() => {
-    if (!active) {
+    if (!active || still) {
       scale.setValue(1);
       return;
     }
@@ -45,7 +47,7 @@ export function Breathe({ children, active = true, depth = 1.18, durationMs = 90
     return () => {
       loop.stop();
     };
-  }, [active, depth, durationMs, scale]);
+  }, [active, depth, durationMs, scale, still]);
 
   return <Animated.View style={{ transform: [{ scale }] }}>{children}</Animated.View>;
 }
