@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { View, Text, Pressable, Image, StyleSheet } from "react-native";
+import { View, Text, Pressable, Image, Platform, StyleSheet } from "react-native";
 import { Glyph } from "./glyph";
 import { radius } from "./theme-tokens";
 import type { ExtendedThemeTokens } from "./theme-tokens";
@@ -18,6 +18,11 @@ interface ImagePreviewProps {
 
 /** The tallest a thumbnail grows. Past this the image scales down to fit. */
 const MAX_HEIGHT = 280;
+
+/** React Native's Image decodes SVG only on the web. */
+function canDraw(dataUri: string): boolean {
+  return Platform.OS === "web" || !dataUri.startsWith("data:image/svg+xml");
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -58,6 +63,7 @@ export function ImagePreview({ path, file, tokens, onReveal }: ImagePreviewProps
           paddingVertical: 7,
           backgroundColor: tokens.surface2,
         },
+        pathLink: { flexShrink: 1, minWidth: 0 },
         path: {
           fontFamily: tokens.fontMono,
           fontSize: 11.5,
@@ -121,6 +127,7 @@ export function ImagePreview({ path, file, tokens, onReveal }: ImagePreviewProps
     [tokens],
   );
 
+  const drawable = file?.dataUri && canDraw(file.dataUri) ? file.dataUri : null;
   const chips: string[] = [];
   if (file?.width && file.height) chips.push(`${file.width} × ${file.height}`);
   if (file?.bytes) chips.push(formatBytes(file.bytes));
@@ -148,6 +155,7 @@ export function ImagePreview({ path, file, tokens, onReveal }: ImagePreviewProps
             accessibilityRole="link"
             accessibilityLabel={`Show ${path} in the file manager`}
             onPress={onReveal}
+            style={styles.pathLink}
           >
             <Text style={styles.path} numberOfLines={1}>
               {path}
@@ -166,7 +174,7 @@ export function ImagePreview({ path, file, tokens, onReveal }: ImagePreviewProps
             </Text>
           ))}
         </View>
-        {file?.dataUri ? (
+        {drawable ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={shown ? "Hide the image" : "Show the image"}
@@ -181,12 +189,17 @@ export function ImagePreview({ path, file, tokens, onReveal }: ImagePreviewProps
 
       {file === null ? (
         <Text style={styles.message}>Reading the file…</Text>
-      ) : file.dataUri === null ? (
-        <Text style={styles.message}>{file.error ?? "The image could not be read."}</Text>
+      ) : drawable === null ? (
+        <Text style={styles.message}>
+          {file.error ??
+            (file.dataUri
+              ? "SVG cannot be previewed on this device."
+              : "The image could not be read.")}
+        </Text>
       ) : shown ? (
         <View style={styles.canvas}>
           <Image
-            source={{ uri: file.dataUri }}
+            source={{ uri: drawable }}
             style={frame}
             resizeMode="contain"
             accessibilityLabel={path}

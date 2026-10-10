@@ -146,7 +146,13 @@ export function SystemCard({ envelope, tokens }: SystemCardProps): React.ReactEl
       style={styles.container}
     >
       {envelope.body ? (
-        <Pressable accessibilityRole="button" onPress={() => setExpanded((prev) => !prev)}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          accessibilityLabel={`${look.label}: ${envelope.title}`}
+          accessibilityHint={expanded ? "Hides the details" : "Shows the details"}
+          onPress={() => setExpanded((prev) => !prev)}
+        >
           {head}
         </Pressable>
       ) : (

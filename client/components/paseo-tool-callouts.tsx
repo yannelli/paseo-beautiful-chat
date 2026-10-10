@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Glyph } from "./glyph";
+import { formatDuration } from "./format";
 import { frosted } from "./frosted";
 import { surfaceProps } from "./view-props";
 import { glowing } from "./glow";
@@ -27,7 +28,8 @@ interface PaseoToolCalloutProps {
 }
 
 export function PaseoToolCallout({ data, tokens, defaultExpanded = true }: PaseoToolCalloutProps) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [override, setOverride] = useState<boolean | null>(null);
+  const expanded = override ?? defaultExpanded;
 
   const styles = useMemo(
     () =>
@@ -99,15 +101,31 @@ export function PaseoToolCallout({ data, tokens, defaultExpanded = true }: Paseo
       {...surfaceProps(frosted, glowing(tokens.isDark), selectionSurface)}
       style={styles.container}
     >
-      <Pressable onPress={() => setExpanded((p) => !p)} style={styles.header}>
+      <Pressable
+        onPress={() => setOverride(!expanded)}
+        style={styles.header}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={`Paseo ${data.tool}`}
+      >
         <View style={styles.headerLeft}>
           <Glyph name="Paseo" size={13} color={tokens.accent} />
           <Text selectable style={styles.toolPill}>
             {data.tool}
           </Text>
-          {data.createAgent && <ProviderLogo provider={data.createAgent.provider} size={14} />}
-          {data.models && <ProviderLogo provider={data.models.provider} size={14} />}
-          {data.activity && <ProviderLogo provider={data.activity.provider} size={14} />}
+          {data.createAgent && (
+            <ProviderLogo
+              color={tokens.foreground}
+              provider={data.createAgent.provider}
+              size={14}
+            />
+          )}
+          {data.models && (
+            <ProviderLogo color={tokens.foreground} provider={data.models.provider} size={14} />
+          )}
+          {data.activity && (
+            <ProviderLogo color={tokens.foreground} provider={data.activity.provider} size={14} />
+          )}
           <Text selectable style={styles.titleText} numberOfLines={1}>
             {data.createAgent?.title ||
               (data.models && `Models for ${data.models.provider}`) ||
@@ -119,7 +137,7 @@ export function PaseoToolCallout({ data, tokens, defaultExpanded = true }: Paseo
         <View style={styles.headerRight}>
           {data.durationMs ? (
             <Text selectable style={styles.durationBadge}>
-              {data.durationMs}ms
+              {formatDuration(data.durationMs)}
             </Text>
           ) : null}
           <Rotate active={expanded}>
@@ -167,7 +185,7 @@ function CreateAgentView({
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <ProviderLogo provider={data.provider} size={16} showLabel />
+          <ProviderLogo color={tokens.foreground} provider={data.provider} size={16} showLabel />
           {data.model && (
             <Text
               selectable
@@ -188,6 +206,7 @@ function CreateAgentView({
             <Text
               selectable
               style={{
+                fontFamily: tokens.fontUi,
                 fontSize: 10,
                 fontWeight: "600",
                 textTransform: "uppercase",
@@ -203,36 +222,39 @@ function CreateAgentView({
           )}
         </View>
 
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 4,
-            paddingHorizontal: 8,
-            paddingVertical: 3,
-            borderRadius: radius.block,
-            backgroundColor: tokens.successBg,
-          }}
-        >
-          <Glyph name="CheckCircle" size={11} color={tokens.success} />
-          <Text
-            selectable
+        {data.agentId ? (
+          <View
             style={{
-              fontSize: 11,
-              fontFamily: tokens.fontUi,
-              color: tokens.success,
-              fontWeight: "600",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: radius.block,
+              backgroundColor: tokens.successBg,
             }}
           >
-            {data.agentId ? `${data.agentId.slice(0, 12)}…` : "running"}
-          </Text>
-        </View>
+            <Glyph name="CheckCircle" size={11} color={tokens.success} />
+            <Text
+              selectable
+              style={{
+                fontSize: 11,
+                fontFamily: tokens.fontUi,
+                color: tokens.success,
+                fontWeight: "600",
+              }}
+            >
+              {`${data.agentId.slice(0, 12)}…`}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={{ gap: 4 }}>
         <Text
           selectable
           style={{
+            fontFamily: tokens.fontUi,
             fontSize: 10,
             fontWeight: "700",
             textTransform: "uppercase",
@@ -264,6 +286,7 @@ function ListProvidersView({
       <Text
         selectable
         style={{
+          fontFamily: tokens.fontUi,
           fontSize: 11,
           color: tokens.foregroundMuted,
         }}
@@ -290,7 +313,7 @@ function ListProvidersView({
               }}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <ProviderLogo provider={p.id} size={15} />
+                <ProviderLogo color={tokens.foreground} provider={p.id} size={15} />
                 <View>
                   <View
                     style={{
@@ -302,6 +325,7 @@ function ListProvidersView({
                     <Text
                       selectable
                       style={{
+                        fontFamily: tokens.fontUi,
                         fontSize: 12,
                         fontWeight: "700",
                         color: tokens.foreground,
@@ -323,6 +347,7 @@ function ListProvidersView({
                   <Text
                     selectable
                     style={{
+                      fontFamily: tokens.fontUi,
                       fontSize: 11,
                       color: tokens.foregroundMuted,
                       marginTop: 1,
@@ -346,6 +371,7 @@ function ListProvidersView({
                 <Text
                   selectable
                   style={{
+                    fontFamily: tokens.fontUi,
                     fontSize: 10,
                     fontWeight: "600",
                     textTransform: "uppercase",
@@ -373,8 +399,15 @@ function ListModelsView({
   return (
     <View style={{ gap: 8 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <ProviderLogo provider={data.provider} size={16} showLabel />
-        <Text selectable style={{ fontSize: 11, color: tokens.foregroundSubtle }}>
+        <ProviderLogo color={tokens.foreground} provider={data.provider} size={16} showLabel />
+        <Text
+          selectable
+          style={{
+            fontFamily: tokens.fontUi,
+            fontSize: 11,
+            color: tokens.foregroundSubtle,
+          }}
+        >
           Supported models & reasoning modes:
         </Text>
       </View>
@@ -410,6 +443,7 @@ function ListModelsView({
               <Text
                 selectable
                 style={{
+                  fontFamily: tokens.fontUi,
                   fontSize: 11,
                   color: tokens.foregroundMuted,
                 }}
@@ -435,6 +469,7 @@ function ListModelsView({
                   <Text
                     selectable
                     style={{
+                      fontFamily: tokens.fontUi,
                       fontSize: 10,
                       color: tokens.accent,
                       fontWeight: "600",
@@ -486,7 +521,7 @@ function GetActivityView({
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <ProviderLogo provider={data.provider} size={14} />
+          <ProviderLogo color={tokens.foreground} provider={data.provider} size={14} />
           <Text
             selectable
             style={{
@@ -498,7 +533,14 @@ function GetActivityView({
             Target: {data.agentId}
           </Text>
         </View>
-        <Text selectable style={{ fontSize: 10, color: tokens.foregroundSubtle }}>
+        <Text
+          selectable
+          style={{
+            fontFamily: tokens.fontUi,
+            fontSize: 10,
+            color: tokens.foregroundSubtle,
+          }}
+        >
           {data.activities.length} recent activities
         </Text>
       </View>
@@ -524,6 +566,7 @@ function GetActivityView({
             <Text
               selectable
               style={{
+                fontFamily: tokens.fontUi,
                 fontSize: 12,
                 color: tokens.foreground,
               }}

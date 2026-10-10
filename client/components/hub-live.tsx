@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo } from "react";
-import { View, StyleSheet } from "react-native";
+import { View, StyleSheet, Text } from "react-native";
 import { HubCallout } from "./hub-callout";
 import type { ExtendedThemeTokens } from "./theme-tokens";
 import { retireHubActivity, useHubActivity } from "../hub-activity";
 import { noteTimelineItem, useIsTimelineTail } from "../timeline-tail";
 import type { HubData } from "../../shared/contracts";
+import { formatAge } from "./format";
+import { useNow } from "./use-now";
 
 interface TimelineTailHubProps {
   agentId: string;
@@ -37,18 +39,20 @@ interface TimelineTailHubProps {
  */
 export function TimelineTailHub({ agentId, tokens, itemKey, at, kind }: TimelineTailHubProps) {
   useEffect(() => {
-    noteTimelineItem(itemKey, at);
-  }, [itemKey, at]);
+    noteTimelineItem(agentId, itemKey, at);
+  }, [agentId, itemKey, at]);
 
-  const isTail = useIsTimelineTail(itemKey);
+  const isTail = useIsTimelineTail(agentId, itemKey);
   const activity = useHubActivity(agentId);
+  const now = useNow();
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        container: { marginTop: 6 },
+        container: { marginTop: 6, gap: 4 },
+        age: { fontFamily: tokens.fontUi, fontSize: 10.5, color: tokens.foregroundSubtle },
       }),
-    [],
+    [tokens],
   );
 
   const data = useMemo((): HubData | null => {
@@ -67,10 +71,15 @@ export function TimelineTailHub({ agentId, tokens, itemKey, at, kind }: Timeline
     if (spent) retireHubActivity(agentId, at);
   }, [spent, agentId, at]);
 
-  if (!isTail || spent || !data) return null;
+  // The hub row that published this snapshot already draws it; a copy right under it adds nothing.
+  const ownSnapshot = kind === "tool" && activity !== null && activity.at === at;
+  if (!isTail || spent || ownSnapshot || !data || !activity) return null;
 
   return (
     <View style={styles.container}>
+      <Text style={styles.age}>
+        {`Background jobs as of the last hub call, ${formatAge(activity.at, now)}`}
+      </Text>
       <HubCallout data={data} tokens={tokens} />
     </View>
   );

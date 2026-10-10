@@ -21,3 +21,9 @@ export const revealPathRpc = defineRpc({
     error: z.string().nullable(),
   }),
 });
+
+// Strips a trailing `:line` or `:line-line` selector, such as `main.ts:55-85`.
+// Nothing else: a path may hold spaces, and a Windows drive has its own colon.
+export function stripSelector(path: string): string {
+  return path.trim().replace(/:\d+(?:-\d+)?$/, "");
+}

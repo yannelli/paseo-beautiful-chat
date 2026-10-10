@@ -16,11 +16,12 @@ import type { TaskListData, TaskItemData, TaskStatus } from "../../shared/contra
 interface TaskListProps {
   data: TaskListData;
   tokens: ExtendedThemeTokens;
+  /** Rows are read-only unless the owner of the list can act on a status change. */
   onToggleTask?: (taskId: string, newStatus: TaskStatus) => void;
 }
 
 export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
-  const [tasks, setTasks] = useState<TaskItemData[]>(data.tasks);
+  const tasks = data.tasks;
   const [expandedBlockedId, setExpandedBlockedId] = useState<string | null>(null);
 
   const completedCount = tasks.filter((t) => t.status === "completed").length;
@@ -135,18 +136,6 @@ export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
         icon: {
           fontFamily: tokens.fontUi,
           fontSize: 16,
-        },
-        phaseBadge: {
-          fontFamily: tokens.fontUi,
-          fontSize: 11,
-          fontWeight: "600",
-          textTransform: "uppercase",
-          letterSpacing: 0.5,
-          color: tokens.accent,
-          backgroundColor: tokens.accentBg,
-          paddingHorizontal: 8,
-          paddingVertical: 2,
-          borderRadius: radius.chip,
         },
         headerTitle: {
           fontFamily: tokens.fontUi,
@@ -267,6 +256,11 @@ export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
           borderWidth: 1,
           borderColor: tokens.warningBorder,
         },
+        blockedToggle: {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 3,
+        },
         blockedReasonText: {
           fontFamily: tokens.fontUi,
           fontSize: 12,
@@ -277,15 +271,14 @@ export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
     [tokens],
   );
 
-  const toggleStatus = (task: TaskItemData) => {
-    let nextStatus: TaskStatus = "pending";
-    if (task.status === "pending") nextStatus = "in_progress";
-    else if (task.status === "in_progress") nextStatus = "completed";
-    else if (task.status === "completed") nextStatus = "pending";
-
-    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t)));
-    onToggleTask?.(task.id, nextStatus);
-  };
+  const toggleStatus = onToggleTask
+    ? (task: TaskItemData) => {
+        let nextStatus: TaskStatus = "pending";
+        if (task.status === "pending") nextStatus = "in_progress";
+        else if (task.status === "in_progress") nextStatus = "completed";
+        onToggleTask(task.id, nextStatus);
+      }
+    : undefined;
 
   return (
     <View
@@ -305,9 +298,6 @@ export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
                 <Text selectable style={styles.headerTitle}>
                   {data.phaseName}
                 </Text>
-                <Text selectable style={styles.phaseBadge}>
-                  OMP todo
-                </Text>
               </View>
             </View>
           </View>
@@ -316,7 +306,7 @@ export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
               <View style={styles.statusRow}>
                 <PulseDot color={tokens.accent} size={6} />
                 <Text selectable style={styles.statusText}>
-                  Tasks
+                  working
                 </Text>
               </View>
             ) : null}
@@ -347,8 +337,14 @@ export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
                 onLayout={(event) => recordTick(taskIndex, event.nativeEvent.layout.y)}
               >
                 <Pressable
-                  accessibilityLabel={`Set ${task.title} status`}
-                  onPress={() => toggleStatus(task)}
+                  accessibilityLabel={
+                    toggleStatus
+                      ? `Set ${task.title} status`
+                      : `${task.title}, ${task.status.replace("_", " ")}`
+                  }
+                  accessibilityRole={toggleStatus ? "button" : undefined}
+                  disabled={!toggleStatus}
+                  onPress={toggleStatus ? () => toggleStatus(task) : undefined}
                   style={styles.taskDot}
                 >
                   {isDone ? (
@@ -367,18 +363,16 @@ export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
                 </Pressable>
 
                 <View style={styles.taskContent}>
-                  <Pressable onPress={() => toggleStatus(task)}>
-                    <Text
-                      selectable
-                      style={[
-                        styles.taskTitle,
-                        isDone && styles.taskTitleCompleted,
-                        isActive && styles.taskTitleActive,
-                      ]}
-                    >
-                      {task.title}
-                    </Text>
-                  </Pressable>
+                  <Text
+                    selectable
+                    style={[
+                      styles.taskTitle,
+                      isDone && styles.taskTitleCompleted,
+                      isActive && styles.taskTitleActive,
+                    ]}
+                  >
+                    {task.title}
+                  </Text>
 
                   <View style={styles.taskFooterRow}>
                     {isActive && (
@@ -391,15 +385,29 @@ export function TaskList({ data, tokens, onToggleTask }: TaskListProps) {
                         Done
                       </Text>
                     )}
-                    {isBlocked && (
+                    {isBlocked && !task.blockerReason && (
+                      <Text style={[styles.statusLabel, { color: tokens.warning }, unselectable]}>
+                        Blocked
+                      </Text>
+                    )}
+                    {isBlocked && task.blockerReason ? (
                       <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded: isBlockedOpen }}
+                        accessibilityLabel="Blocked, show the reason"
                         onPress={() => setExpandedBlockedId(isBlockedOpen ? null : task.id)}
+                        style={styles.blockedToggle}
                       >
                         <Text style={[styles.statusLabel, { color: tokens.warning }, unselectable]}>
-                          Blocked ▾
+                          Blocked
                         </Text>
+                        <Glyph
+                          name={isBlockedOpen ? "ChevronUp" : "ChevronDown"}
+                          size={11}
+                          color={tokens.warning}
+                        />
                       </Pressable>
-                    )}
+                    ) : null}
                     {task.duration ? (
                       <Text selectable style={styles.durationBadge}>
                         {task.duration}

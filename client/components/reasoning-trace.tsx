@@ -21,7 +21,13 @@ interface ReasoningTraceProps {
 }
 
 export function ReasoningTrace({ data, tokens, defaultExpanded = false }: ReasoningTraceProps) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  // Open while streaming, closed once done, until the reader toggles it.
+  const [override, setOverride] = useState<boolean | null>(null);
+  const isExpanded = override ?? defaultExpanded;
+  const tokenLabel =
+    data.totalTokens > 0
+      ? `${data.tokensEstimated ? "~" : ""}${data.totalTokens.toLocaleString()} tokens`
+      : undefined;
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
 
   const durationFormatted = (data.durationMs / 1000).toFixed(1);
@@ -237,7 +243,13 @@ export function ReasoningTrace({ data, tokens, defaultExpanded = false }: Reason
       {...surfaceProps(frosted, glowing(tokens.isDark), selectionSurface)}
       style={styles.wrapper}
     >
-      <Pressable onPress={() => setIsExpanded((prev) => !prev)} style={styles.header}>
+      <Pressable
+        onPress={() => setOverride(!isExpanded)}
+        style={styles.header}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: isExpanded }}
+        accessibilityLabel={isThinking ? "Reasoning, in progress" : "Reasoning"}
+      >
         <View style={styles.headerLeft}>
           <View style={styles.iconBubble}>
             <Breathe active={isThinking}>
@@ -269,9 +281,9 @@ export function ReasoningTrace({ data, tokens, defaultExpanded = false }: Reason
                   {data.steps.length} steps
                 </Text>
               ) : null}
-              {data.totalTokens > 0 ? (
+              {tokenLabel ? (
                 <Text selectable style={styles.badge}>
-                  {data.totalTokens.toLocaleString()} tokens
+                  {tokenLabel}
                 </Text>
               ) : null}
             </View>
@@ -330,6 +342,9 @@ export function ReasoningTrace({ data, tokens, defaultExpanded = false }: Reason
                   </View>
 
                   <Pressable
+                    disabled={!step.codeSnippet}
+                    accessibilityRole={step.codeSnippet ? "button" : undefined}
+                    accessibilityState={step.codeSnippet ? { expanded: isDetailOpen } : undefined}
                     onPress={() => setActiveStepId(activeStepId === step.id ? null : step.id)}
                     style={styles.stepHeader}
                   >
@@ -363,11 +378,13 @@ export function ReasoningTrace({ data, tokens, defaultExpanded = false }: Reason
             })}
           </View>
 
-          <View style={styles.footer}>
-            <Text selectable style={styles.footerText}>
-              Total Tokens: {data.totalTokens}
-            </Text>
-          </View>
+          {tokenLabel ? (
+            <View style={styles.footer}>
+              <Text selectable style={styles.footerText}>
+                {data.tokensEstimated ? `About ${tokenLabel}, estimated from the text` : tokenLabel}
+              </Text>
+            </View>
+          ) : null}
         </View>
       )}
     </View>

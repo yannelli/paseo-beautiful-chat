@@ -1,4 +1,11 @@
 import { useSyncExternalStore } from "react";
+import { settingsRpc } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import {
+  presentationSchema,
+  presentationSettings,
+  type PresentationSettings,
+} from "../shared/presentation-settings";
 
 export const ACCENT_PRESETS = {
   host: undefined,
@@ -9,109 +16,54 @@ export const ACCENT_PRESETS = {
 } as const;
 
 export type AccentPreset = keyof typeof ACCENT_PRESETS;
-export type UiFontPreference = "inter" | "system";
-export type CodeFontPreference = "code" | "plain";
-export type MarkdownVariantPreference = "document" | "compact" | "terminal";
+export type UiFontPreference = PresentationSettings["uiFont"];
+export type CodeFontPreference = PresentationSettings["codeFont"];
+export type MarkdownVariantPreference = PresentationSettings["markdownVariant"];
 
-export interface EnhancerPreferences {
-  accent: AccentPreset;
-  uiFont: UiFontPreference;
-  codeFont: CodeFontPreference;
-  frostedGlass: boolean;
-  /**
-   * A light that follows the pointer across a card. Web and desktop only:
-   * touch platforms have no hover, so the attribute is inert there.
-   */
-  pointerGlow: boolean;
-  /**
-   * Paseo maps a stream item to the plugin timeline item before any transformer
-   * runs, and that mapping carries only the text. Pasted images therefore never
-   * reach plugin code, so the enhanced bubble cannot draw them. Turning this off
-   * hands prompts back to the host, whose own bubble still shows them.
-   */
-  enhancedUserBubble: boolean;
-  /**
-   * The Copy / Add to chat bar that follows a highlight. Web and desktop only:
-   * iOS and Android route selection through the platform's own menu, which the
-   * plugin cannot extend, so the toggle has no effect there.
-   */
-  selectionActions: boolean;
-  /**
-   * The plugin's own markdown rendering for assistant replies. Off hands the
-   * turn back to Paseo's renderer, which is the safety valve: the plugin
-   * cannot import the host markdown pipeline, so its version is a reasonable
-   * subset rather than a superset.
-   */
-  assistantMarkdown: boolean;
-  /** Which look the markdown renderer uses. */
-  markdownVariant: MarkdownVariantPreference;
-}
+// The host settings document, cached because transformers run outside React and read it synchronously.
+// On web a local copy paints the first frame before the host answers.
+export type EnhancerPreferences = PresentationSettings;
 
-const STORAGE_KEY = "paseo/beautiful-chat/preferences/v1";
+export const DEFAULT_PREFERENCES: Readonly<EnhancerPreferences> = presentationSchema.parse({});
 
-export const DEFAULT_PREFERENCES: Readonly<EnhancerPreferences> = {
-  accent: "host",
-  uiFont: "inter",
-  codeFont: "code",
-  frostedGlass: true,
-  pointerGlow: true,
-  enhancedUserBubble: true,
-  selectionActions: true,
-  assistantMarkdown: true,
-  markdownVariant: "document",
-};
+// The 0.1 storage key, kept so the first host load can adopt choices saved in this browser.
+const MIRROR_KEY = "paseo/beautiful-chat/preferences/v1";
+const MIGRATED_KEY = "paseo/beautiful-chat/preferences/migrated";
 
 const listeners = new Set<() => void>();
 
 function storage(): Storage | undefined {
-  const candidate = globalThis as typeof globalThis & { localStorage?: Storage };
-  return candidate.localStorage;
-}
-
-function isAccentPreset(value: unknown): value is AccentPreset {
-  return typeof value === "string" && value in ACCENT_PRESETS;
-}
-
-function loadPreferences(): EnhancerPreferences {
   try {
-    const stored = storage()?.getItem(STORAGE_KEY);
-    if (!stored) return { ...DEFAULT_PREFERENCES };
-    const candidate = JSON.parse(stored) as Partial<EnhancerPreferences>;
-    return {
-      accent: isAccentPreset(candidate.accent) ? candidate.accent : DEFAULT_PREFERENCES.accent,
-      uiFont: candidate.uiFont === "system" ? "system" : DEFAULT_PREFERENCES.uiFont,
-      codeFont: candidate.codeFont === "plain" ? "plain" : DEFAULT_PREFERENCES.codeFont,
-      frostedGlass:
-        typeof candidate.frostedGlass === "boolean"
-          ? candidate.frostedGlass
-          : DEFAULT_PREFERENCES.frostedGlass,
-      pointerGlow:
-        typeof candidate.pointerGlow === "boolean"
-          ? candidate.pointerGlow
-          : DEFAULT_PREFERENCES.pointerGlow,
-      enhancedUserBubble:
-        typeof candidate.enhancedUserBubble === "boolean"
-          ? candidate.enhancedUserBubble
-          : DEFAULT_PREFERENCES.enhancedUserBubble,
-      selectionActions:
-        typeof candidate.selectionActions === "boolean"
-          ? candidate.selectionActions
-          : DEFAULT_PREFERENCES.selectionActions,
-      assistantMarkdown:
-        typeof candidate.assistantMarkdown === "boolean"
-          ? candidate.assistantMarkdown
-          : DEFAULT_PREFERENCES.assistantMarkdown,
-      markdownVariant:
-        candidate.markdownVariant === "compact" || candidate.markdownVariant === "terminal"
-          ? candidate.markdownVariant
-          : DEFAULT_PREFERENCES.markdownVariant,
-    };
+    return (globalThis as typeof globalThis & { localStorage?: Storage }).localStorage;
   } catch {
-    return { ...DEFAULT_PREFERENCES };
+    return undefined;
   }
 }
 
-let preferences = loadPreferences();
+function readMirror(): EnhancerPreferences | undefined {
+  try {
+    const stored = storage()?.getItem(MIRROR_KEY);
+    return stored ? presentationSchema.parse(JSON.parse(stored)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStorage(key: string, value: string): void {
+  try {
+    storage()?.setItem(key, value);
+  } catch {
+    // Storage can be disabled; the host copy is the one that persists.
+  }
+}
+
+let preferences: EnhancerPreferences = readMirror() ?? { ...DEFAULT_PREFERENCES };
+
+function same(a: EnhancerPreferences, b: EnhancerPreferences): boolean {
+  return (Object.keys(DEFAULT_PREFERENCES) as Array<keyof EnhancerPreferences>).every(
+    (key) => a[key] === b[key],
+  );
+}
 
 function publish(): void {
   for (const listener of listeners) listener();
@@ -121,23 +73,11 @@ export function getEnhancerPreferences(): EnhancerPreferences {
   return preferences;
 }
 
-export function updateEnhancerPreferences(update: Partial<EnhancerPreferences>): void {
-  preferences = { ...preferences, ...update };
-  try {
-    storage()?.setItem(STORAGE_KEY, JSON.stringify(preferences));
-  } catch {
-    // Browser storage can be disabled. Keep the change alive for this session.
-  }
-  publish();
-}
-
-export function resetEnhancerPreferences(): void {
-  preferences = { ...DEFAULT_PREFERENCES };
-  try {
-    storage()?.removeItem(STORAGE_KEY);
-  } catch {
-    // Keep the default session value if storage is unavailable.
-  }
+/** Replaces the cached values, for example with the host document after a save. */
+export function setEnhancerPreferences(values: EnhancerPreferences): void {
+  if (same(preferences, values)) return;
+  preferences = { ...values };
+  writeStorage(MIRROR_KEY, JSON.stringify(preferences));
   publish();
 }
 
@@ -150,4 +90,20 @@ export function useEnhancerPreferences(): EnhancerPreferences {
     getEnhancerPreferences,
     getEnhancerPreferences,
   );
+}
+
+/** Reads the host document at startup; the first load in a browser that used 0.1 uploads its choices. */
+export async function loadHostPreferences(client: PluginClientContext): Promise<void> {
+  const rpc = settingsRpc(presentationSettings.id);
+  const result = await client.rpc(rpc.read, {});
+  if (result.status !== "ready") return;
+  const hostValues = presentationSchema.parse(result.values);
+  const local = readMirror();
+  const firstLoad = !storage()?.getItem(MIGRATED_KEY);
+  writeStorage(MIGRATED_KEY, "1");
+  if (firstLoad && local && !same(local, hostValues)) {
+    const saved = await client.rpc(rpc.write, { revision: result.revision, values: local });
+    if (saved.status === "saved") return;
+  }
+  setEnhancerPreferences(hostValues);
 }

@@ -16,13 +16,30 @@ import { SyntaxHighlightBlock, renderTerminalOutput } from "./syntax-highlight";
 import { FileTypeLogo } from "./file-type-logo";
 import { ImagePreview } from "./image-preview";
 import { GitHubBody } from "./github-body";
+import { formatDuration } from "./format";
+import {
+  AskPairsBody,
+  ErrorBox,
+  FetchBody,
+  NoteBody,
+  PlanBody,
+  SearchBody,
+  SubagentActivity,
+  WorktreeBody,
+} from "./tool-bodies";
 import { isImagePath } from "../image-file";
 import type { ImageFile } from "../image-file";
 import { selectableSurface, unselectable } from "./selection";
 import { selectionCodeText, selectionSurface } from "./selection-actions";
 import type { ToolCalloutData } from "../../shared/contracts";
 
-function getToolIconName(tool: string): string {
+function getToolIconName(data: ToolCalloutData): string {
+  const tool = data.tool;
+  if (data.icon) return data.icon;
+  if (tool === "search") return data.search?.toolName === "web_search" ? "Globe" : "Search";
+  if (tool === "fetch") return "Globe";
+  if (tool === "plan") return "ListChecks";
+  if (tool === "worktree") return "GitBranch";
   if (tool === "git") return "Git";
   if (tool === "paseo") return "Paseo";
   if (tool === "github") return "GitHub";
@@ -59,7 +76,9 @@ export function ToolCallout({
   onRevealPath,
   imageFile,
 }: ToolCalloutProps) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  // The card follows its status (open while running or failed) until the reader toggles it.
+  const [override, setOverride] = useState<boolean | null>(null);
+  const expanded = override ?? defaultExpanded;
 
   // Every branch below needs a payload. A tool that carries none — a hub op
   // with no parsed record, an unmapped kind — would otherwise draw an empty
@@ -74,8 +93,13 @@ export function ToolCallout({
     data.tool === "write" ||
     data.tool === "edit" ||
     data.tool === "eval" ||
+    data.tool === "search" ||
+    data.tool === "fetch" ||
+    data.tool === "note" ||
+    data.tool === "plan" ||
+    data.tool === "worktree" ||
     (data.tool === "mcp" && Boolean(data.mcp)) ||
-    (data.tool === "ask" && Boolean(data.askOptions)) ||
+    (data.tool === "ask" && Boolean(data.askOptions || data.askPairs)) ||
     (data.tool === "task" && Boolean(data.subagent)) ||
     (data.tool === "hub" && Boolean(data.hub)) ||
     (data.tool === "paseo" && Boolean(data.paseo));
@@ -88,18 +112,14 @@ export function ToolCallout({
     [onRevealPath, filePath],
   );
 
-  const isSuccess = data.status === "completed";
   const isRunning = data.status === "running";
   const isFailed = data.status === "failed";
+  const isCanceled = data.status === "canceled";
 
   // Only a real shell call can "complete without output". A git op or an
   // unmapped tool that prints nothing is not a silent command, so neither
   // inherits the shell sentence.
   const isShellCall = data.tool === "bash" || data.tool === "shell";
-
-  const statusColor = isSuccess ? tokens.success : isRunning ? tokens.accent : tokens.danger;
-
-  const statusBg = isSuccess ? tokens.successBg : isRunning ? tokens.accentBg : tokens.dangerBg;
 
   const iconColor =
     data.tool === "git" ? "#F05032" : data.tool === "github" ? tokens.foreground : tokens.accent;
@@ -168,18 +188,10 @@ export function ToolCallout({
           fontFamily: tokens.fontUi,
           color: tokens.foregroundSubtle,
         },
-        statusBadge: {
-          paddingHorizontal: 6,
-          paddingVertical: 2,
-          borderRadius: radius.chip,
-          backgroundColor: statusBg,
-        },
-        statusText: {
+        statusLabel: {
           fontFamily: tokens.fontUi,
-          fontSize: 10,
-          fontWeight: "700",
-          textTransform: "uppercase",
-          color: statusColor,
+          fontSize: 11,
+          fontWeight: "600",
         },
         chevron: {
           fontFamily: tokens.fontUi,
@@ -440,7 +452,7 @@ export function ToolCallout({
           color: tokens.danger,
         },
       }),
-    [tokens, statusBg, statusColor],
+    [tokens],
   );
 
   return (
@@ -448,22 +460,31 @@ export function ToolCallout({
       {...surfaceProps(frosted, glowing(tokens.isDark), selectionSurface)}
       style={styles.container}
     >
-      <Pressable onPress={() => setExpanded((p) => !p)} style={styles.header}>
+      <Pressable
+        onPress={() => setOverride(!expanded)}
+        style={styles.header}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={`${data.title}, ${data.status}`}
+      >
         <View style={styles.headerLeft}>
-          <Breathe depth={1.08} durationMs={1800}>
-            <Glyph name={getToolIconName(data.tool)} size={13} color={iconColor} />
+          <Breathe depth={1.08} durationMs={1800} active={isRunning}>
+            <Glyph name={getToolIconName(data)} size={13} color={iconColor} />
           </Breathe>
-          <Text selectable style={styles.toolPill}>
-            {data.tool}
-          </Text>
+          {data.tool === "note" ? null : (
+            <Text selectable style={styles.toolPill}>
+              {data.tool}
+            </Text>
+          )}
           {data.filePath ? (
-            <Breathe depth={1.08} durationMs={1800}>
+            <Breathe depth={1.08} durationMs={1800} active={isRunning}>
               {isImagePath(data.filePath) ? (
                 // An image has no language logo to show, and the generic page
                 // mark says less than the picture mark does.
                 <Glyph name="Image" size={13} color={tokens.foreground} />
               ) : (
                 <FileTypeLogo
+                  tokens={tokens}
                   filename={data.filePath}
                   language={data.language}
                   size="sm"
@@ -480,7 +501,7 @@ export function ToolCallout({
         <View style={styles.headerRight}>
           {data.durationMs ? (
             <Text selectable style={styles.durationBadge}>
-              {data.durationMs}ms
+              {formatDuration(data.durationMs)}
             </Text>
           ) : null}
 
@@ -490,38 +511,30 @@ export function ToolCallout({
             </Text>
           )}
 
-          {isFailed && (
-            <Text selectable style={{ fontSize: 11, fontWeight: "600", color: tokens.danger }}>
-              failed
-            </Text>
+          {isFailed && <Text style={[styles.statusLabel, { color: tokens.danger }]}>failed</Text>}
+
+          {isCanceled && (
+            <Text style={[styles.statusLabel, { color: tokens.foregroundSubtle }]}>canceled</Text>
           )}
 
           {isRunning && (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
               <PulseDot color={tokens.accent} size={5} />
-              <Text
-                selectable
-                style={{
-                  fontSize: 11,
-                  color: tokens.accent,
-                  fontWeight: "500",
-                }}
-              >
+              <Text style={[styles.statusLabel, { color: tokens.accent, fontWeight: "500" }]}>
                 running
               </Text>
             </View>
           )}
 
           <Rotate active={expanded}>
-            <Breathe depth={1.08} durationMs={1800}>
-              <Glyph name="ChevronDown" size={16} color={tokens.foregroundMuted} />
-            </Breathe>
+            <Glyph name="ChevronDown" size={16} color={tokens.foregroundMuted} />
           </Rotate>
         </View>
       </Pressable>
 
       {expanded && (
         <View style={styles.body}>
+          {isFailed && data.error ? <ErrorBox message={data.error} tokens={tokens} /> : null}
           {(data.tool === "bash" || data.tool === "shell" || data.tool === "git") && (
             <View style={styles.terminalWindow}>
               {(data.shell?.command || data.command) && (
@@ -576,9 +589,7 @@ export function ToolCallout({
                 >
                   <Glyph name="Brain" size={13} color={tokens.accent} />
                   <Text selectable style={styles.thinkingTitle}>
-                    {data.thinking?.status === "thinking"
-                      ? "Live Reasoning Stream…"
-                      : "Reasoning Completed"}
+                    {isRunning ? "Thinking…" : "Thought"}
                   </Text>
                 </View>
                 {data.thinking?.tokenCount ? (
@@ -592,7 +603,7 @@ export function ToolCallout({
                 {data.thinking?.text ||
                   data.code ||
                   data.output ||
-                  "Analyzing constraints and formulating steps..."}
+                  (isRunning ? "" : "No reasoning text was recorded.")}
               </Text>
               {data.thinking?.steps && data.thinking.steps.length > 0 && (
                 <View style={styles.thinkingStepsList}>
@@ -708,9 +719,15 @@ export function ToolCallout({
               />
             ) : (
               <SyntaxHighlightBlock
-                code={data.code || "// [Empty content or pending stream]"}
-                language={data.language ?? "text"}
-                filename={data.filePath ? `${data.filePath} ${data.lineRange || ""}` : undefined}
+                code={data.code || (isRunning ? "" : "(no content)")}
+                language={data.code ? (data.language ?? "text") : "text"}
+                filename={
+                  data.filePath
+                    ? data.lineRange
+                      ? `${data.filePath}:${data.lineRange}`
+                      : data.filePath
+                    : undefined
+                }
                 tokens={tokens}
                 showLineNumbers={Boolean(data.code)}
                 onRevealFile={revealFile}
@@ -720,8 +737,8 @@ export function ToolCallout({
 
           {data.tool === "edit" && (
             <SyntaxHighlightBlock
-              code={data.diff || data.code || "// [Edit: diff applied]"}
-              language="diff"
+              code={data.diff || data.code || (isRunning ? "" : "(the host reported no diff)")}
+              language={data.diff || data.code ? "diff" : "text"}
               filename={data.filePath}
               tokens={tokens}
               showLineNumbers
@@ -730,7 +747,13 @@ export function ToolCallout({
             />
           )}
 
-          {data.tool === "eval" && (
+          {data.tool === "eval" && !data.cells && !data.code && !data.output && (
+            <Text style={styles.silentCommandText}>
+              {isRunning ? "Waiting for output…" : "The cell printed nothing."}
+            </Text>
+          )}
+
+          {data.tool === "eval" && (data.cells || data.code || data.output) && (
             <View style={{ gap: 10 }}>
               {(
                 data.cells ?? [
@@ -746,7 +769,7 @@ export function ToolCallout({
                     <SyntaxHighlightBlock
                       code={cell.code}
                       language={cell.language}
-                      filename={cell.title || "Persistent Kernel Cell"}
+                      filename={cell.title}
                       tokens={tokens}
                       showLineNumbers
                       compact
@@ -767,10 +790,16 @@ export function ToolCallout({
             </View>
           )}
 
+          {data.tool === "ask" && data.askPairs && !data.askOptions && (
+            <AskPairsBody data={data} tokens={tokens} running={isRunning} />
+          )}
+
           {data.tool === "ask" && data.askOptions && (
             <View style={styles.askContainer}>
               <Text selectable style={styles.askPrompt}>
-                {answered.length > 0 ? "Options offered:" : "Waiting for a decision:"}
+                {answered.length === 0 && isRunning
+                  ? "Waiting for a decision:"
+                  : "Options offered:"}
               </Text>
               {data.askOptions.map((opt) => {
                 // The answer is whatever the tool reported, so a label match
@@ -826,8 +855,18 @@ export function ToolCallout({
           )}
 
           {data.tool === "task" && data.subagent && (
-            <SubagentBatch batch={data.subagent} running={isRunning} tokens={tokens} />
+            <View style={{ gap: 8 }}>
+              <SubagentBatch batch={data.subagent} running={isRunning} tokens={tokens} />
+              <SubagentActivity data={data} tokens={tokens} />
+            </View>
           )}
+          {data.tool === "search" && <SearchBody data={data} tokens={tokens} running={isRunning} />}
+          {data.tool === "fetch" && <FetchBody data={data} tokens={tokens} running={isRunning} />}
+          {data.tool === "worktree" && (
+            <WorktreeBody data={data} tokens={tokens} running={isRunning} />
+          )}
+          {data.tool === "plan" && <PlanBody data={data} tokens={tokens} running={isRunning} />}
+          {data.tool === "note" && <NoteBody data={data} tokens={tokens} running={isRunning} />}
           {data.tool === "hub" && data.hub && <HubCallout data={data.hub} tokens={tokens} />}
           {data.tool === "paseo" && data.paseo && (
             <PaseoToolCallout data={data.paseo} tokens={tokens} />
@@ -870,7 +909,7 @@ function SubagentChips({
   tokens,
   styles,
 }: {
-  agent: { agentType: string; status?: string };
+  agent: { name: string; agentType: string; status?: string };
   tokens: ExtendedThemeTokens;
   styles: SubagentStyles;
 }) {
@@ -879,9 +918,11 @@ function SubagentChips({
 
   return (
     <>
-      <Text selectable style={[styles.chip, styles.typeChip]}>
-        {agent.agentType}
-      </Text>
+      {agent.agentType && agent.agentType !== agent.name ? (
+        <Text selectable style={[styles.chip, styles.typeChip]}>
+          {agent.agentType}
+        </Text>
+      ) : null}
       {status && tone ? (
         <Text selectable style={[styles.chip, { color: tone.fg, backgroundColor: tone.bg }]}>
           {status}
@@ -915,12 +956,7 @@ function SubagentBatch({
   // leads the header and the row below carries the brief on its own.
   const only = count === 1 ? agents[0] : undefined;
   const headline = only ? only.name : count === 0 ? "subagents" : `${count} subagents`;
-  const pending =
-    count === 0
-      ? "spawning subagents…"
-      : count === 1
-        ? "spawning 1 subagent…"
-        : `spawning ${count} subagents…`;
+  const pending = count > 1 ? `${count} subagents working…` : "subagent working…";
 
   return (
     <View style={styles.batch}>

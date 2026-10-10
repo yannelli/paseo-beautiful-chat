@@ -16,8 +16,6 @@ import { parseMarkdown, type MdAlign, type MdBlock, type MdInline, type MdListIt
  */
 export type MarkdownVariant = "document" | "compact" | "terminal";
 
-export const MARKDOWN_VARIANTS: readonly MarkdownVariant[] = ["document", "compact", "terminal"];
-
 export interface MarkdownViewProps {
   text: string;
   tokens: ExtendedThemeTokens;
@@ -160,6 +158,8 @@ interface MarkdownStyles {
   plain: TextStyle;
   listBlock: ViewStyle;
   listRow: ViewStyle;
+  itemGroup: ViewStyle;
+  itemBlocks: ViewStyle;
   indent0: ViewStyle;
   indent1: ViewStyle;
   indent2: ViewStyle;
@@ -310,39 +310,49 @@ function renderItem(
     </Text>
   );
 
+  let marker: React.ReactNode;
+  let markerWidth = metrics.markerWidth;
   if (item.checked !== undefined) {
-    return (
-      <View key={key} style={[styles.listRow, indentStyle]}>
-        <View style={styles.checkboxCell}>
-          <Glyph
-            name={item.checked ? "CheckCircle" : "Circle"}
-            size={metrics.glyphSize}
-            color={item.checked ? tokens.success : tokens.foregroundSubtle}
-          />
-        </View>
-        {body}
+    marker = (
+      <View style={styles.checkboxCell}>
+        <Glyph
+          name={item.checked ? "CheckCircle" : "Circle"}
+          size={metrics.glyphSize}
+          color={item.checked ? tokens.success : tokens.foregroundSubtle}
+        />
       </View>
     );
-  }
-
-  if (item.ordered) {
-    return (
-      <View key={key} style={[styles.listRow, indentStyle]}>
-        <Text
-          numberOfLines={1}
-          style={[styles.markerOrdered, { width: numberWidth }]}
-        >{`${item.index}.`}</Text>
-        {body}
-      </View>
+  } else if (item.ordered) {
+    markerWidth = numberWidth;
+    marker = (
+      <Text
+        numberOfLines={1}
+        style={[styles.markerOrdered, { width: numberWidth }]}
+      >{`${item.index}.`}</Text>
     );
-  }
-
-  return (
-    <View key={key} style={[styles.listRow, indentStyle]}>
+  } else {
+    marker = (
       <Text numberOfLines={1} style={styles.markerBullet}>
         {BULLETS[depth % BULLETS.length] ?? BULLETS[0]}
       </Text>
+    );
+  }
+
+  const row = (
+    <View key={key} style={[styles.listRow, indentStyle]}>
+      {marker}
       {body}
+    </View>
+  );
+  if (item.blocks === undefined) return row;
+
+  // Code fenced under the item lines up with the item's text column.
+  return (
+    <View key={key} style={styles.itemGroup}>
+      {row}
+      <View style={[styles.itemBlocks, { marginLeft: depth * metrics.indentStep + markerWidth }]}>
+        {item.blocks.map((block, index) => renderBlock(block, `${key}c${index}`, false, context))}
+      </View>
     </View>
   );
 }
@@ -607,6 +617,12 @@ function buildStyles(tokens: ExtendedThemeTokens, variant: MarkdownVariant): Mar
     listRow: {
       flexDirection: "row",
       alignItems: "flex-start",
+    },
+    itemGroup: {
+      gap: metrics.itemGap,
+    },
+    itemBlocks: {
+      gap: metrics.itemGap,
     },
     indent0: { marginLeft: 0 },
     indent1: { marginLeft: metrics.indentStep },

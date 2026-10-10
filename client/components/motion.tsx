@@ -1,7 +1,43 @@
-import React, { useEffect, useRef, type ReactNode } from "react";
-import { Animated, Easing, Platform, View } from "react-native";
+import React, { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { AccessibilityInfo, Animated, Easing, Platform, View } from "react-native";
 
 const useNativeDriver = Platform.OS !== "web";
+
+let reduceMotion = false;
+const motionListeners = new Set<() => void>();
+let motionSubscription: { remove(): void } | null = null;
+
+function setReduceMotion(value: boolean): void {
+  if (value === reduceMotion) return;
+  reduceMotion = value;
+  for (const listener of motionListeners) listener();
+}
+
+// One AccessibilityInfo subscription however many components ask: a chat
+// mounts hundreds of animated markers. Re-read on resubscribe in case it changed.
+export function subscribeReducedMotion(listener: () => void): () => void {
+  motionListeners.add(listener);
+  if (!motionSubscription) {
+    motionSubscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduceMotion);
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion, () => {});
+  }
+  return () => {
+    motionListeners.delete(listener);
+    if (motionListeners.size > 0) return;
+    motionSubscription?.remove();
+    motionSubscription = null;
+  };
+}
+
+/** The last known reduce-motion setting; current while anything is subscribed. */
+export function isReducedMotion(): boolean {
+  return reduceMotion;
+}
+
+/** True while the system asks for reduced motion. Loops stop and transitions jump. */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(subscribeReducedMotion, isReducedMotion, isReducedMotion);
+}
 
 interface RotateProps {
   children: ReactNode;
@@ -20,8 +56,13 @@ interface RotateProps {
  */
 export function Rotate({ children, active, degrees = 180, durationMs = 180 }: RotateProps) {
   const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
+  const still = useReducedMotion();
 
   useEffect(() => {
+    if (still) {
+      progress.setValue(active ? 1 : 0);
+      return;
+    }
     const animation = Animated.timing(progress, {
       toValue: active ? 1 : 0,
       duration: durationMs,
@@ -32,7 +73,7 @@ export function Rotate({ children, active, degrees = 180, durationMs = 180 }: Ro
     return () => {
       animation.stop();
     };
-  }, [active, durationMs, progress]);
+  }, [active, durationMs, progress, still]);
 
   const rotate = progress.interpolate({
     inputRange: [0, 1],
@@ -61,12 +102,13 @@ interface PopProps {
 export function Pop({ children, trigger, depth = 1.35, durationMs = 260 }: PopProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const previous = useRef(trigger);
+  const still = useReducedMotion();
 
   useEffect(() => {
     // Skip the first render: nothing has happened yet to acknowledge.
     if (previous.current === trigger) return;
     previous.current = trigger;
-    if (!trigger) {
+    if (!trigger || still) {
       scale.setValue(1);
       return;
     }
@@ -88,7 +130,7 @@ export function Pop({ children, trigger, depth = 1.35, durationMs = 260 }: PopPr
     return () => {
       animation.stop();
     };
-  }, [trigger, depth, durationMs, scale]);
+  }, [trigger, depth, durationMs, scale, still]);
 
   return <Animated.View style={{ transform: [{ scale }] }}>{children}</Animated.View>;
 }
@@ -112,10 +154,12 @@ interface GlowProps {
  */
 export function Glow({ children, color, size, active = true, durationMs = 1800 }: GlowProps) {
   const pulse = useRef(new Animated.Value(0)).current;
+  const still = useReducedMotion();
 
   useEffect(() => {
-    if (!active) {
-      pulse.setValue(0);
+    // Under reduced motion the halo stays lit but still, so the step keeps its marker.
+    if (!active || still) {
+      pulse.setValue(active ? 0.5 : 0);
       return;
     }
     const loop = Animated.loop(
@@ -138,7 +182,7 @@ export function Glow({ children, color, size, active = true, durationMs = 1800 }
     return () => {
       loop.stop();
     };
-  }, [active, durationMs, pulse]);
+  }, [active, durationMs, pulse, still]);
 
   const opacity = pulse.interpolate({
     inputRange: [0, 1],

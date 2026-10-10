@@ -1,9 +1,13 @@
 import { useEffect } from "react";
+import { Platform } from "react-native";
 import type { ViewProps } from "react-native";
+import { isReducedMotion, subscribeReducedMotion } from "./motion";
+import { installShared } from "./shared-install";
 
 const STYLE_ELEMENT_ID = "beautiful-chat-glow";
 const ATTRIBUTE = "data-bcglow";
 const ACTIVE_ATTRIBUTE = "data-bcglow-on";
+const OFF_ATTRIBUTE = "data-bcglow-off";
 
 /**
  * A light that follows the pointer across a card.
@@ -58,7 +62,7 @@ const GLOW_RULE = `@property --bcga {
 }
 /* A card that is not hovered keeps the gradient at zero alpha, which is what
    lets the light fade out rather than vanish. Only the setting removes it. */
-[data-bcglow-off] [${ATTRIBUTE}] {
+[${OFF_ATTRIBUTE}] [${ATTRIBUTE}] {
   background-image: none;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -74,9 +78,11 @@ const GLOW_RULE = `@property --bcga {
  * moves on the compositor and React never re-renders.
  */
 export function installPointerGlow(): () => void {
-  if (typeof document === "undefined") return () => {};
-  if (document.getElementById(STYLE_ELEMENT_ID)) return () => {};
+  if (Platform.OS !== "web" || typeof document === "undefined") return () => {};
+  return installShared("glow", installListener);
+}
 
+function installListener(): () => void {
   const style = document.createElement("style");
   style.id = STYLE_ELEMENT_ID;
   style.textContent = GLOW_RULE;
@@ -104,7 +110,13 @@ export function installPointerGlow(): () => void {
     active = null;
   };
 
+  const root = document.documentElement;
   const onMove = (event: PointerEvent): void => {
+    // Off or reduced, the light is never drawn, so skip the layout read.
+    if (root.hasAttribute(OFF_ATTRIBUTE) || isReducedMotion()) {
+      clear();
+      return;
+    }
     const node = event.target instanceof Element ? event.target.closest(`[${ATTRIBUTE}]`) : null;
     if (!(node instanceof HTMLElement)) {
       clear();
@@ -120,8 +132,12 @@ export function installPointerGlow(): () => void {
   // keep its light on until the pointer returned.
   document.addEventListener("pointerleave", clear);
   window.addEventListener("blur", clear);
+  const stopWatchingMotion = subscribeReducedMotion(() => {
+    if (isReducedMotion()) clear();
+  });
 
   return () => {
+    stopWatchingMotion();
     if (frame !== 0) cancelAnimationFrame(frame);
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerleave", clear);
@@ -151,9 +167,12 @@ export function glowing(isDark: boolean): ViewProps {
  */
 export function usePointerGlow(enabled: boolean): void {
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    const root = document.documentElement;
-    if (enabled) root.removeAttribute("data-bcglow-off");
-    else root.setAttribute("data-bcglow-off", "");
+    if (enabled || Platform.OS !== "web" || typeof document === "undefined") return;
+    // Counted, so the attribute leaves with the last surface that set it.
+    return installShared("glow-off", () => {
+      const root = document.documentElement;
+      root.setAttribute(OFF_ATTRIBUTE, "");
+      return () => root.removeAttribute(OFF_ATTRIBUTE);
+    });
   }, [enabled]);
 }

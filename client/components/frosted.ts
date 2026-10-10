@@ -1,4 +1,6 @@
+import { Platform } from "react-native";
 import type { ViewProps } from "react-native";
+import { installShared } from "./shared-install";
 
 const STYLE_ELEMENT_ID = "beautiful-chat-frosted";
 
@@ -17,22 +19,18 @@ const FROSTED_RULE = `[data-ompfrost] {
   backdrop-filter: blur(14px) saturate(150%);
 }`;
 
-/**
- * Installs the blur rule. A no-op off web, and idempotent so a second client
- * mount reuses the existing element.
- */
+/** Installs the blur rule. A no-op off web; shared so the last cleanup removes it. */
 export function installFrostedGlass(): () => void {
-  if (typeof document === "undefined") return () => {};
-  if (document.getElementById(STYLE_ELEMENT_ID)) return () => {};
-
-  const style = document.createElement("style");
-  style.id = STYLE_ELEMENT_ID;
-  style.textContent = FROSTED_RULE;
-  document.head.appendChild(style);
-
-  return () => {
-    style.remove();
-  };
+  if (Platform.OS !== "web" || typeof document === "undefined") return () => {};
+  return installShared("frosted", () => {
+    const style = document.createElement("style");
+    style.id = STYLE_ELEMENT_ID;
+    style.textContent = FROSTED_RULE;
+    document.head.appendChild(style);
+    return () => {
+      style.remove();
+    };
+  });
 }
 
 /**

@@ -27,26 +27,11 @@ export interface ReasoningTraceData {
   agentModel: string;
   durationMs: number;
   totalTokens: number;
+  /** The count is derived from the text length, not reported by the provider. */
+  tokensEstimated?: boolean;
   isStreaming?: boolean;
   status: "thinking" | "completed" | "interrupted";
   steps: ReasoningStep[];
-}
-
-export type RiskLevel = "low" | "medium" | "high";
-
-export interface ApprovalRequest {
-  id: string;
-  toolName: string;
-  title: string;
-  riskLevel: RiskLevel;
-  rationale: string;
-  command?: string;
-  targetPath?: string;
-  diff?: string;
-  cwd?: string;
-  timeoutSeconds?: number;
-  status: "pending" | "approved" | "denied";
-  timestamp: string;
 }
 
 export type TaskStatus = "completed" | "in_progress" | "pending" | "blocked";
@@ -81,8 +66,11 @@ export type ToolCallKind =
   | "ask"
   | "hub"
   | "paseo"
-  | "ast_grep"
-  | "lsp";
+  | "search"
+  | "fetch"
+  | "note"
+  | "plan"
+  | "worktree";
 
 /**
  * The hub tool answers with a text block plus a typed `details` record, and the
@@ -386,11 +374,52 @@ export interface GitHubToolData {
   text?: string;
 }
 
+/** A grep, glob, file listing, or web search, as the host's `search` detail reports it. */
+export interface SearchToolData {
+  query: string;
+  /** `grep`, `glob`, `search`, or `web_search`; absent when the provider did not say. */
+  toolName?: string;
+  files?: string[];
+  webResults?: Array<{ title: string; url: string }>;
+  numFiles?: number;
+  numMatches?: number;
+  truncated?: boolean;
+}
+
+/** A URL read, as the host's `fetch` detail reports it. */
+export interface FetchToolData {
+  url: string;
+  prompt?: string;
+  /** The HTTP status code and its reason phrase. */
+  code?: number;
+  codeText?: string;
+  bytes?: number;
+}
+
+/** The commands a worktree setup ran, as the host's `worktree_setup` detail reports them. */
+export interface WorktreeToolData {
+  path: string;
+  branch: string;
+  commands: Array<{
+    command: string;
+    status: "running" | "completed" | "failed";
+    exitCode: number | null;
+    durationMs?: number;
+  }>;
+  truncated?: boolean;
+}
+
+export type ToolCallStatus = "running" | "completed" | "failed" | "canceled";
+
 export interface ToolCalloutData {
   id: string;
   tool: ToolCallKind;
   title: string;
-  status: "running" | "completed" | "failed";
+  status: ToolCallStatus;
+  /** The failure message the host reported for a failed call. */
+  error?: string;
+  /** A Lucide icon the host suggested for the row, used by the generic card. */
+  icon?: string;
   durationMs?: number;
   exitCode?: number;
   filePath?: string;
@@ -410,6 +439,11 @@ export interface ToolCalloutData {
   /** Selected option labels, or the typed reply. Empty until answered. */
   askAnswer?: string[];
   /**
+   * Question and answer pairs, when the host reports the exchange as prose
+   * rather than as options. Paseo 0.11 maps OMP's `ask` this way.
+   */
+  askPairs?: Array<{ question: string; answer: string }>;
+  /**
    * One `task` call spawns a batch: the tool takes a shared `context` plus a
    * list of briefs, so the card carries the list. `model` is absent here on
    * purpose — the call names an agent type, and which model that resolves to
@@ -423,7 +457,14 @@ export interface ToolCalloutData {
       task: string;
       status?: string;
     }>;
+    /** The child agent's tool calls so far, when the host tracks them. */
+    actions?: Array<{ toolName: string; summary?: string }>;
+    /** The child's transcript or final report. */
+    log?: string;
   };
+  search?: SearchToolData;
+  fetch?: FetchToolData;
+  worktree?: WorktreeToolData;
   hub?: HubData;
   mcp?: McpToolData;
   shell?: ShellToolData;
@@ -443,15 +484,4 @@ export interface NoticeCalloutData {
   message: string;
   /** Present when the item came from the host's `error` type rather than `notification`. */
   fatal?: boolean;
-}
-
-export interface MockChatMessage {
-  id: string;
-  sender: "user" | "assistant";
-  timestamp: string;
-  text?: string;
-  reasoningTrace?: ReasoningTraceData;
-  taskList?: TaskListData;
-  toolCallouts?: ToolCalloutData[];
-  approvalRequest?: ApprovalRequest;
 }

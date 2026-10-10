@@ -1,4 +1,6 @@
+import { Platform } from "react-native";
 import type { ViewProps } from "react-native";
+import { installShared } from "./shared-install";
 
 const STYLE_ELEMENT_ID = "beautiful-chat-shimmer";
 
@@ -34,19 +36,18 @@ const SHIMMER_RULE = `@keyframes bcshimmer {
   [data-bcshimmer] { animation: none; background-image: none; }
 }`;
 
-/** Installs the sweep. A no-op off web, and idempotent across client mounts. */
+/** Installs the sweep. A no-op off web; shared so the last cleanup removes it. */
 export function installShimmer(): () => void {
-  if (typeof document === "undefined") return () => {};
-  if (document.getElementById(STYLE_ELEMENT_ID)) return () => {};
-
-  const style = document.createElement("style");
-  style.id = STYLE_ELEMENT_ID;
-  style.textContent = SHIMMER_RULE;
-  document.head.appendChild(style);
-
-  return () => {
-    style.remove();
-  };
+  if (Platform.OS !== "web" || typeof document === "undefined") return () => {};
+  return installShared("shimmer", () => {
+    const style = document.createElement("style");
+    style.id = STYLE_ELEMENT_ID;
+    style.textContent = SHIMMER_RULE;
+    document.head.appendChild(style);
+    return () => {
+      style.remove();
+    };
+  });
 }
 
 /** Spread onto the row that is working. Remove it and the sweep stops. */

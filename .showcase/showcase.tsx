@@ -15,7 +15,6 @@ import { buildThemeTokens } from "../client/components/theme-tokens";
 import { ToolCallout } from "../client/components/tool-callouts";
 import { ReasoningTrace } from "../client/components/reasoning-trace";
 import { TaskList } from "../client/components/task-list";
-import { ApprovalCard } from "../client/components/approval-card";
 import { UserMessage } from "../client/components/user-message";
 import { HubCallout } from "../client/components/hub-callout";
 import { PaseoToolCallout } from "../client/components/paseo-tool-callouts";
@@ -539,20 +538,6 @@ const tasks = {
   ],
 };
 
-const approval = {
-  id: "approval",
-  toolName: "bash",
-  title: "Delete the build output",
-  riskLevel: "high" as const,
-  rationale: "The command removes a directory that is not tracked by Git.",
-  command: "rm -rf dist",
-  targetPath: "~/code/beautiful-chat/dist",
-  cwd: "~/code/beautiful-chat",
-  timeoutSeconds: 60,
-  status: "pending" as const,
-  timestamp: new Date("2026-09-14T10:24:29Z").toISOString(),
-};
-
 function Shot({
   id,
   width = 900,
@@ -636,7 +621,6 @@ function Thread() {
         data={{ id: "n1", level: "warning", message: "The daemon restarted twice in 30s." }}
         tokens={tokens}
       />
-      <ApprovalCard request={approval} tokens={tokens} />
       <View>
         <MarkdownView text={REPLY} tokens={tokens} variant="document" />
         <AssistantFooter text={REPLY} at={new Date("2026-09-15T22:47:12Z")} tokens={tokens} />
@@ -771,9 +755,6 @@ function Showcase() {
       </Shot>
       <Shot id="shot-tasks">
         <TaskList data={tasks} tokens={tokens} />
-      </Shot>
-      <Shot id="shot-approval">
-        <ApprovalCard request={approval} tokens={tokens} />
       </Shot>
       <Shot id="shot-user">
         <UserMessage

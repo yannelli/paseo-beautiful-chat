@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
+import { copyText } from "@getpaseo/plugin/client/react-native";
 import { Glyph } from "./glyph";
 import { frosted } from "./frosted";
 import { surfaceProps } from "./view-props";
@@ -81,6 +82,15 @@ const PYTHON_KEYWORDS: Record<string, true> = {
   True: true,
   False: true,
   self: true,
+};
+
+/** Labels that ask for no grammar, so the local fallback leaves them uncoloured. */
+const PLAIN_LANGUAGES: Record<string, true> = {
+  "": true,
+  text: true,
+  plaintext: true,
+  plain: true,
+  txt: true,
 };
 
 /** Eval runs both kernels, so the callout must colour either dialect. */
@@ -233,7 +243,7 @@ const HTML_LIKE = /<\/?[a-zA-Z][\w-]*(?:\s|\/?>)/;
 /** A declaration inside a block marks the text as style rules. */
 const CSS_LIKE = /[a-zA-Z-]+\s*:\s*[^;{}]+;/;
 
-export function detectEmbedded(text: string): "html" | "css" | null {
+function detectEmbedded(text: string): "html" | "css" | null {
   if (HTML_LIKE.test(text)) return "html";
   if (text.includes("{") && CSS_LIKE.test(text)) return "css";
   return null;
@@ -245,7 +255,7 @@ export function detectEmbedded(text: string): "html" | "css" | null {
  * of each line is resolved up front: a template's whole body is read once,
  * classified once, and that verdict is applied to every line it covers.
  */
-export function classifyLines(lines: string[], base: string): string[] {
+function classifyLines(lines: string[], base: string): string[] {
   // A block that already declares itself markup or styles needs no detection.
   if (base === "html" || base === "css" || base === "bash") {
     return lines.map(() => base);
@@ -475,11 +485,14 @@ export function SyntaxHighlightBlock({
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(code).catch(() => {});
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+    // The host owns the clipboard on every platform; navigator has none on
+    // iOS or Android. "Copied" shows only once the copy has landed.
+    copyText(code)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1800);
+      })
+      .catch(() => {});
   }, [code]);
 
   const lines = useMemo(() => code.trimEnd().split("\n"), [code]);
@@ -631,12 +644,7 @@ export function SyntaxHighlightBlock({
       {(filename || language) && (
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <FileTypeLogo
-              filename={filename}
-              language={language}
-              size="sm"
-              foregroundColor={tokens.foreground}
-            />
+            <FileTypeLogo filename={filename} language={language} size="sm" tokens={tokens} />
             {filename ? (
               onRevealFile ? (
                 <Pressable
@@ -659,7 +667,12 @@ export function SyntaxHighlightBlock({
               </Text>
             ) : null}
           </View>
-          <Pressable onPress={handleCopy} style={styles.copyButton}>
+          <Pressable
+            onPress={handleCopy}
+            accessibilityRole="button"
+            accessibilityLabel={copied ? "Code copied" : "Copy code"}
+            style={styles.copyButton}
+          >
             <Pop trigger={copied}>
               <Glyph
                 name={copied ? "Check" : "Copy"}
@@ -842,6 +855,8 @@ function renderSyntaxLine(
     );
   }
 
+  // Prose has no grammar: `if` is a word there and `//` is part of a URL.
+  if (PLAIN_LANGUAGES[language.toLowerCase()] === true) return line;
   if (language === "bash") return renderBashTokens(line, tokens);
   return renderDialectLine(line, lineDialect, tokens);
 }
@@ -1135,7 +1150,7 @@ const OUTPUT_TOKENS =
  * lifted out so the numbers are findable.
  */
 export function renderTerminalOutput(text: string, tokens: ExtendedThemeTokens): React.ReactNode {
-  const lines = text.replace(/\s+$/, "").split("\n");
+  const lines = text.trimEnd().split("\n");
 
   return lines.map((line, lineIdx) => {
     const key = `out-${lineIdx}`;

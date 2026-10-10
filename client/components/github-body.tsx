@@ -126,8 +126,8 @@ export function GitHubBody({ data, tokens, running }: GitHubBodyProps) {
         />
       ) : null}
 
-      {data.rows?.map((row) => (
-        <View key={`${row.label}:${row.value}`} style={styles.row}>
+      {data.rows?.map((row, index) => (
+        <View key={`${index}:${row.label}:${row.value}`} style={styles.row}>
           <Text selectable style={styles.label} numberOfLines={1}>
             {row.label}
           </Text>
